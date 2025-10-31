@@ -7,18 +7,12 @@ Original file is located at
     https://colab.research.google.com/drive/175PonR7Nc8EVaVO7AdmE3Fnu5S9OSq7r
 """
 
-# -*- coding: utf-8 -*-
-"""
-SPUS Quantitative Analyzer Streamlit App
-"""
-
 import streamlit as st
 import pandas as pd
 import os
 import time
 from datetime import datetime
 import sys
-import glob
 
 # --- إصلاح مسار الاستيراد (Import Path Fix) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -71,6 +65,7 @@ def load_excel_data(excel_path):
     يقرأ ملف الإكسل وجميع الشيتات الموجودة به.
     يتم إعادة تحميل البيانات فقط إذا تغير الملف.
     """
+    # (استخدام BASE_DIR لضمان المسار الصحيح)
     abs_excel_path = os.path.join(BASE_DIR, excel_path)
 
     if not os.path.exists(abs_excel_path):
@@ -95,13 +90,14 @@ def load_excel_data(excel_path):
 def style_dataframe_text_only(df):
     """
     يطبق تنسيقاً شرطياً (ألوان) على الأعمدة النصية الرئيسية.
+    نستخدم هذا لأن الأعمدة الرقمية تم تنسيقها كنصوص في ملف الإكسل.
     """
     def highlight_text(val):
         val_str = str(val).lower()
         if 'undervalued' in val_str or 'bullish crossover' in val_str:
             # أخضر للفرص الجيدة
             return 'color: #00A600' # Dark Green
-        elif 'overvalued' in val_str or 'bearish' in val_str or 'unprofitable' in val_str: # إضافة 'unprofitable'
+        elif 'overvalued' in val_str or 'bearish' in val_str:
             # أحمر للتحذيرات
             return 'color: #D30000' # Dark Red
         elif 'near support' in val_str:
@@ -120,7 +116,7 @@ def style_dataframe_text_only(df):
 # --- ⭐️ نهاية الدالة الجديدة ⭐️ ---
 
 
-# --- دالة تشغيل التحليل ---
+# --- دالة تشغيل التحليل (مأخوذة من الكود الرئيسي لـ spus.py) ---
 def run_full_analysis(CONFIG):
     """
     هذه هي الوظيفة الرئيسية المنسوخة من spus.py's if __name__ == '__main__':
@@ -382,9 +378,7 @@ def run_full_analysis(CONFIG):
             format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
             format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
             format_for_excel(top_quant_high_rr).to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
-            # ⭐️ --- FIXED: Removed 'index_col=0' from to_excel call --- ⭐️
             format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Graham)', index=True)
-            # ⭐️ --- END FIX ---
             format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
             format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
 
@@ -393,7 +387,6 @@ def run_full_analysis(CONFIG):
         st.error(f"فشل حفظ ملف الإكسل: {e}")
         return False
 
-    pdf_file_path = "" # تعريف المسار هنا لضمان استخدامه لاحقا
     status_text.info("... (7/7) جارٍ حفظ تقرير PDF...")
     progress_bar.progress(0.99, text="Saving PDF report...")
     if REPORTLAB_AVAILABLE:
@@ -473,28 +466,6 @@ def run_full_analysis(CONFIG):
     return True
 
 
-# --- ⭐️ دالة مساعدة: إيجاد أحدث ملف PDF ⭐️ ---
-def find_latest_pdf(excel_base_name):
-    """
-    تبحث عن أحدث ملف PDF تم إنشاؤه في مجلد BASE_DIR.
-    """
-    # البحث عن جميع ملفات PDF التي تبدأ بالاسم الأساسي لملف الإكسل
-    search_pattern = os.path.join(BASE_DIR, f'{excel_base_name}_*.pdf')
-    list_of_files = glob.glob(search_pattern)
-
-    if not list_of_files:
-        return None, "N/A"
-
-    # العثور على أحدث ملف بناءً على وقت الإنشاء
-    latest_file = max(list_of_files, key=os.path.getctime)
-
-    # استخراج اسم الملف فقط (للعرض على زر التحميل)
-    file_name = os.path.basename(latest_file)
-
-    return latest_file, file_name
-# --- ⭐️ نهاية الدالة المساعدة ⭐️ ---
-
-
 # --- واجهة مستخدم Streamlit الرئيسية ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
@@ -509,9 +480,6 @@ def main():
         st.stop()
 
     EXCEL_FILE = CONFIG.get('EXCEL_FILE_PATH', './spus_analysis_results.xlsx')
-
-    # تحديد الاسم الأساسي لملف الإكسل بدون المسار والامتداد
-    EXCEL_BASE_NAME = os.path.splitext(os.path.basename(EXCEL_FILE))[0]
 
     with st.sidebar:
         st.image("https://www.sp-funds.com/wp-content/uploads/2022/02/SP-Funds-Logo-Primary-Wht-1.svg", width=200)
@@ -529,24 +497,6 @@ def main():
 
         st.divider()
         st.info("يعرض التطبيق آخر بيانات تم تحليلها. اضغط على الزر أعلاه لجلب أحدث البيانات.")
-
-        # --- ⭐️ إضافة زر تحميل PDF ⭐️ ---
-        latest_pdf_path, pdf_file_name = find_latest_pdf(EXCEL_BASE_NAME)
-
-        if latest_pdf_path:
-            with open(latest_pdf_path, "rb") as pdf_file:
-                st.download_button(
-                    label="⬇️ تحميل تقرير PDF الأحدث",
-                    data=pdf_file,
-                    file_name=pdf_file_name,
-                    mime="application/pdf"
-                )
-        elif REPORTLAB_AVAILABLE:
-            st.caption("سيظهر زر تحميل PDF هنا بعد تشغيل التحليل.")
-        else:
-            st.warning("تعذر العثور على تقرير PDF. (تأكد من تثبيت reportlab).")
-        # --- ⭐️ نهاية زر تحميل PDF ⭐️ ---
-
 
     data_sheets, mod_time = load_excel_data(EXCEL_FILE)
 

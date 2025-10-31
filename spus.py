@@ -10,6 +10,10 @@ Original file is located at
 # -*- coding: utf-8 -*-
 """
 SPUS Quantitative Analyzer v11 (Fibonacci Model)
+
+This script performs a multi-factor quantitative analysis (Value, Momentum, Quality, Size)
+on SPUS holdings. It now calculates dynamic Fibonacci retracement (61.8%)
+and extension (161.8%) levels based on the recent 90-day high/low.
 """
 
 import requests
@@ -57,6 +61,7 @@ def load_config(path='config.json'):
 # ---------------------------------------------
 
 # ⭐️ --- CRITICAL FIX: Load CONFIG at module level --- ⭐️
+# This makes the CONFIG variable available to all functions when imported.
 CONFIG = load_config('config.json')
 # ----------------------------------------------------
 
@@ -67,6 +72,8 @@ def fetch_spus_tickers():
     Fetches SPUS holdings tickers by reading a local CSV file.
     This version reads from a predefined local path.
     '''
+
+    # Check if CONFIG was loaded successfully
     if CONFIG is None:
         logging.error("fetch_spus_tickers: CONFIG is None. Cannot find CSV path.")
         return []
@@ -82,6 +89,7 @@ def fetch_spus_tickers():
 
     try:
         holdings_df = pd.read_csv(local_path)
+
     except pd.errors.ParserError:
         logging.warning("Pandas ParserError. Trying again with 'skiprows'...")
         for i in range(1, 10): # Try skipping up to 9 lines
@@ -95,6 +103,7 @@ def fetch_spus_tickers():
         else:
             logging.error(f"Failed to parse CSV from {local_path} even after skipping 9 rows.")
             return []
+
     except Exception as e:
         logging.error(f"An unexpected error occurred during local CSV read/parse: {e}")
         return []
@@ -120,6 +129,8 @@ def fetch_spus_tickers():
     return ticker_symbols
 # --- END NEW FUNCTION ---
 
+
+# 2. Define helper functions
 
 # --- ⭐️ UPDATED Support/Resistance Function to include Dates and Fib Levels ---
 def calculate_support_resistance(hist_df):
@@ -337,6 +348,7 @@ def process_ticker(ticker):
          combined_hist = combined_hist[~combined_hist.index.duplicated(keep='first')]
 
     hist = combined_hist
+
     momentum = None
     rsi = None
     last_price = None

@@ -18,7 +18,7 @@ import os
 import time
 from datetime import datetime
 import sys
-import glob # ⭐️ --- NEW: Added glob for file searching ---
+import glob
 
 # --- إصلاح مسار الاستيراد (Import Path Fix) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -95,14 +95,13 @@ def load_excel_data(excel_path):
 def style_dataframe_text_only(df):
     """
     يطبق تنسيقاً شرطياً (ألوان) على الأعمدة النصية الرئيسية.
-    نستخدم هذا لأن الأعمدة الرقمية تم تنسيقها كنصوص في ملف الإكسل.
     """
     def highlight_text(val):
         val_str = str(val).lower()
         if 'undervalued' in val_str or 'bullish crossover' in val_str:
             # أخضر للفرص الجيدة
             return 'color: #00A600' # Dark Green
-        elif 'overvalued' in val_str or 'bearish' in val_str:
+        elif 'overvalued' in val_str or 'bearish' in val_str or 'unprofitable' in val_str: # إضافة 'unprofitable'
             # أحمر للتحذيرات
             return 'color: #D30000' # Dark Red
         elif 'near support' in val_str:
@@ -121,7 +120,7 @@ def style_dataframe_text_only(df):
 # --- ⭐️ نهاية الدالة الجديدة ⭐️ ---
 
 
-# --- دالة تشغيل التحليل (مأخوذة من الكود الرئيسي لـ spus.py) ---
+# --- دالة تشغيل التحليل ---
 def run_full_analysis(CONFIG):
     """
     هذه هي الوظيفة الرئيسية المنسوخة من spus.py's if __name__ == '__main__':
@@ -318,7 +317,7 @@ def run_full_analysis(CONFIG):
             'Next Earnings Date': calendar_data.get(ticker, "N/A"),
             'Latest Headline': headline_data.get(ticker, "N/A"),
             'Dividend Yield (%)': fin_info.get('Dividend Yield'),
-            '1-Year Momentum (%)': momentum_str,
+            '1-Year Momentum (%)': momentum_data.get(ticker, pd.NA),
             'Return on Equity (ROE)': fin_info.get('Return on Equity (ROE)'),
         }
         results_list.append(result_data)
@@ -383,7 +382,9 @@ def run_full_analysis(CONFIG):
             format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
             format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
             format_for_excel(top_quant_high_rr).to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
-            format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Graham)', index_col=0, index=True) # تم تصحيح الكتابة المزدوجة لـ index_col/index
+            # ⭐️ --- FIXED: Removed 'index_col=0' from to_excel call --- ⭐️
+            format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Graham)', index=True)
+            # ⭐️ --- END FIX ---
             format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
             format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
 

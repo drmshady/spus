@@ -21,16 +21,13 @@ import pandas as pd
 import os
 import time
 from datetime import datetime
-import sys  # ⭐️ --- (1) إضافة مكتبة النظام ---
+import sys
 
-# --- ⭐️ (2) إصلاح مسار الاستيراد (Import Path Fix) ⭐️ ---
-# الحصول على المسار المطلق للمجلد الذي يوجد به هذا الملف
+# --- إصلاح مسار الاستيراد (Import Path Fix) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# إضافة هذا المجلد إلى بداية مسارات البحث الخاصة بـ Python
-# هذا يضمن أن Python سيبحث في هذا المجلد أولاً
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
-# --- ⭐️ نهاية الإصلاح ⭐️ ---
+# --- نهاية الإصلاح ---
 
 
 # --- استيراد الدوال من ملف spus.py الخاص بك ---
@@ -42,7 +39,7 @@ try:
         calculate_support_resistance,
         calculate_financials_and_fair_price
     )
-except ImportError as e:  # ⭐️ --- (3) تحسين رسالة الخطأ ---
+except ImportError as e:
     st.error("خطأ: فشل استيراد 'spus.py'.")
     st.error(f"تفاصيل الخطأ: {e}")
     st.error(f"المسار الذي يتم البحث فيه: {BASE_DIR}")
@@ -77,7 +74,6 @@ def load_excel_data(excel_path):
     يقرأ ملف الإكسل وجميع الشيتات الموجودة به.
     يتم إعادة تحميل البيانات فقط إذا تغير الملف.
     """
-    # (استخدام BASE_DIR لضمان المسار الصحيح)
     abs_excel_path = os.path.join(BASE_DIR, excel_path)
 
     if not os.path.exists(abs_excel_path):
@@ -98,6 +94,36 @@ def load_excel_data(excel_path):
         return None, None
 
 
+# --- ⭐️ دالة جديدة: التنسيق الشرطي للجداول ⭐️ ---
+def style_dataframe_text_only(df):
+    """
+    يطبق تنسيقاً شرطياً (ألوان) على الأعمدة النصية الرئيسية.
+    نستخدم هذا لأن الأعمدة الرقمية تم تنسيقها كنصوص في ملف الإكسل.
+    """
+    def highlight_text(val):
+        val_str = str(val).lower()
+        if 'undervalued' in val_str or 'bullish crossover' in val_str:
+            # أخضر للفرص الجيدة
+            return 'color: #00A600' # Dark Green
+        elif 'overvalued' in val_str or 'bearish' in val_str:
+            # أحمر للتحذيرات
+            return 'color: #D30000' # Dark Red
+        elif 'near support' in val_str:
+            # أزرق للملاحظات
+            return 'color: #004FB0' # Dark Blue
+        return '' # اللون الافتراضي
+
+    # تحديد الأعمدة التي نريد تطبيق التنسيق عليها
+    style_cols = [col for col in ['Valuation (Graham)', 'MACD_Signal', 'Price vs. Levels'] if col in df.columns]
+
+    if not style_cols:
+        return df # إرجاع الجدول الأصلي إذا لم تكن هناك أعمدة لتنسيقها
+
+    # تطبيق التنسيق
+    return df.style.apply(lambda x: x.map(highlight_text), subset=style_cols)
+# --- ⭐️ نهاية الدالة الجديدة ⭐️ ---
+
+
 # --- دالة تشغيل التحليل (مأخوذة من الكود الرئيسي لـ spus.py) ---
 def run_full_analysis(CONFIG):
     """
@@ -114,7 +140,6 @@ def run_full_analysis(CONFIG):
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            # (استخدام BASE_DIR لضمان المسار الصحيح)
             logging.FileHandler(os.path.join(BASE_DIR, CONFIG['LOG_FILE_PATH'])),
             logging.StreamHandler()
         ]
@@ -134,7 +159,6 @@ def run_full_analysis(CONFIG):
         ticker_symbols = ticker_symbols[:CONFIG['TICKER_LIMIT']]
         status_text.info(f"التحليل يقتصر على أول {CONFIG['TICKER_LIMIT']} شركة فقط.")
 
-    # (المسارات المطلقة يتم التعامل معها الآن داخل دوال spus.py)
     historical_data_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
     if not os.path.exists(historical_data_dir): os.makedirs(historical_data_dir)
     info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
@@ -268,19 +292,11 @@ def run_full_analysis(CONFIG):
         except Exception:
             pass
 
-        try: div_yield_str = f"{fin_info.get('Dividend Yield'):.2f}"
-        except: div_yield_str = "N/A"
-        try: momentum_str = f"{momentum_data.get(ticker, 'N/A'):.2f}"
-        except: momentum_str = "N/A"
-        try: roe_str = f"{fin_info.get('Return on Equity (ROE)'):.2f}"
-        except: roe_str = "N/A"
-        try: risk_pct_str = f"{risk_percentages.get(ticker, 'N/A'):.2f}"
-        except: risk_pct_str = "N/A"
-
-
+        # --- ⭐️ تعديل: إبقاء البيانات كأرقام خام للمعالجة ---
+        # (سنقوم بتنسيقها كنصوص لاحقاً فقط للحفظ)
         result_data = {
             'Ticker': ticker,
-            'Last Price': last_prices.get(ticker, "N/A"),
+            'Last Price': last_prices.get(ticker, pd.NA),
             'Sector': fin_info.get('Sector'),
             'Market Cap': fin_info.get('Market Cap'),
             'Valuation (Graham)': fin_info.get('Valuation (Graham)'),
@@ -289,16 +305,16 @@ def run_full_analysis(CONFIG):
             'Trend (50/200 Day MA)': trend_data.get(ticker, "N/A"),
             'Price vs. Levels': comparison_results.get(ticker, "N/A"),
             'Cut Loss Level (Support)': support_resistance.get('Support'),
-            'Risk % (to Support)': risk_pct_str, # تم التعديل هنا
+            'Risk % (to Support)': risk_percentages.get(ticker, pd.NA),
             'Fib 161.8% Target': support_resistance.get('Fib_161_8'),
-            'Risk/Reward Ratio': risk_reward_ratios.get(ticker, "N/A"),
-            'Shares to Buy ($50 Risk)': shares_to_buy_str,
+            'Risk/Reward Ratio': risk_reward_ratios.get(ticker, pd.NA),
+            'Shares to Buy ($50 Risk)': shares_to_buy_str, # هذا يبقى نص
             'Recent News (48h)': news_data.get(ticker, "N/A"),
             'Next Earnings Date': calendar_data.get(ticker, "N/A"),
             'Latest Headline': headline_data.get(ticker, "N/A"),
-            'Dividend Yield (%)': div_yield_str,
-            '1-Year Momentum (%)': momentum_str,
-            'Return on Equity (ROE)': roe_str,
+            'Dividend Yield (%)': fin_info.get('Dividend Yield'),
+            '1-Year Momentum (%)': momentum_data.get(ticker, pd.NA),
+            'Return on Equity (ROE)': fin_info.get('Return on Equity (ROE)'),
         }
         results_list.append(result_data)
 
@@ -329,17 +345,15 @@ def run_full_analysis(CONFIG):
         (results_df['Z_Size'] * FACTOR_WEIGHTS['SIZE'])
     )
 
-    # تحويل الأعمدة الرقمية قبل التنسيق
+    # تحويل الأعمدة الرقمية الرئيسية
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
 
-
-    # فرز البيانات
     results_df.sort_values(by='Final Quant Score', ascending=False, inplace=True)
     results_df.set_index('Ticker', inplace=True)
 
-    # إنشاء جداول الملخص
+    # إنشاء جداول الملخص (وهي لا تزال تحتوي على أرقام خام)
     top_10_market_cap = results_df.sort_values(by='Market Cap', ascending=False).head(10)
     top_20_quant = results_df.head(20)
     top_10_undervalued = results_df[results_df['Valuation (Graham)'] == 'Undervalued (Graham)'].sort_values(by='Final Quant Score', ascending=False).head(10)
@@ -347,89 +361,76 @@ def run_full_analysis(CONFIG):
     near_support = results_df[results_df['Price vs. Levels'] == 'Near Support'].sort_values(by='Final Quant Score', ascending=False).head(10)
     top_quant_high_rr = top_20_quant[top_20_quant['Risk/Reward Ratio'] > 1].sort_values(by='Risk/Reward Ratio', ascending=False)
 
-    # تنسيق الأعمدة للعرض في الإكسل (بعد إنشاء الجداول الفرعية)
-    format_cols = ['Last Price', 'Fair Price (Graham)', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio', 'Risk % (to Support)']
-    for df in [results_df, top_10_market_cap, top_20_quant, top_10_undervalued, new_crossovers, near_support, top_quant_high_rr]:
-        for col in format_cols:
-            if col in df.columns:
-                # تحويل العمود للتأكد من أنه رقمي أولاً
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-                # تطبيق التنسيق
-                df[col] = df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-
-
-    status_text.info("... (6/7) جارٍ حفظ تقرير الإكسل...")
-    progress_bar.progress(0.98, text="Saving Excel report...")
-
-    # (استخدام BASE_DIR لضمان المسار الصحيح)
+    # --- ⭐️ تعديل: تطبيق التنسيق كـ "نص" فقط عند الحفظ في الإكسل ---
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
-
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
-            results_df.to_excel(writer, sheet_name='All Results', index=True)
-            top_10_market_cap.to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
-            top_20_quant.to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
-            top_quant_high_rr.to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
-            top_10_undervalued.to_excel(writer, sheet_name='Top 10 Undervalued (Graham)', index=True)
-            new_crossovers.to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
-            near_support.to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
+            # قائمة الأعمدة التي تحتاج إلى تنسيق رقمي
+            format_cols = ['Last Price', 'Fair Price (Graham)', 'Cut Loss Level (Support)',
+                           'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio',
+                           'Risk % (to Support)', 'Dividend Yield (%)', '1-Year Momentum (%)',
+                           'Return on Equity (ROE)']
+
+            # دالة لنسخ وتنسيق الداتا فريم للحفظ
+            def format_for_excel(df):
+                df_copy = df.copy()
+                for col in format_cols:
+                    if col in df_copy.columns:
+                        df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+                return df_copy
+
+            # حفظ كل شيت بعد تطبيق التنسيق
+            format_for_excel(results_df).to_excel(writer, sheet_name='All Results', index=True)
+            format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
+            format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
+            format_for_excel(top_quant_high_rr).to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
+            format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Graham)', index=True)
+            format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
+            format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
 
         status_text.info(f"تم حفظ تقرير الإكسل بنجاح: {excel_file_path}")
     except Exception as e:
         st.error(f"فشل حفظ ملف الإكسل: {e}")
         return False
+    # --- ⭐️ نهاية تعديل الحفظ ---
+
 
     status_text.info("... (7/7) جارٍ حفظ تقرير PDF...")
     progress_bar.progress(0.99, text="Saving PDF report...")
     if REPORTLAB_AVAILABLE:
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            base_pdf_path = os.path.splitext(excel_file_path)[0] # (excel_file_path هو مسار مطلق الآن)
+            base_pdf_path = os.path.splitext(excel_file_path)[0]
             pdf_file_path = f"{base_pdf_path}_{timestamp}.pdf"
 
             doc = SimpleDocTemplate(pdf_file_path, pagesize=landscape(letter))
             elements = []
             styles = getSampleStyleSheet()
 
+            # (دالة create_pdf_table تستخدم نفس الداتا فريم المنسقة)
             def create_pdf_table(title, df):
                 if df.empty:
                     return [Paragraph(f"No data for: {title}", styles['h2']), Spacer(1, 0.1*inch)]
-                df_reset = df.reset_index()
+
+                # نستخدم الدالة الجديدة لتنسيق البيانات قبل عرضها في PDF
+                df_formatted = format_for_excel(df.reset_index())
 
                 cols_map = {
-                    'Top 10 by Market Cap (from SPUS)': (
-                        ['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'],
-                        ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']
-                    ),
-                    'Top 20 by Final Quant Score': (
-                        ['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)', 'Next Earnings Date', 'Shares to Buy ($50 Risk)'],
-                        ['Ticker', 'Score', 'Sector', 'Price', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %', 'Earnings', 'Shares']
-                    ),
-                    'Top Quant & High R-R (Ratio > 1)': (
-                        ['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Last Price', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)', 'Shares to Buy ($50 Risk)', 'Next Earnings Date'],
-                        ['Ticker', 'Score', 'R/R', 'Price', 'Stop Loss', 'Fib Target', 'Headline', 'Div %', 'Shares', 'Earnings']
-                    ),
-                    'Top 10 Undervalued (Graham)': (
-                        ['Ticker', 'Final Quant Score', 'Last Price', 'Fair Price (Graham)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'],
-                        ['Ticker', 'Score', 'Price', 'Graham Price', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']
-                    ),
-                    'New Bullish Crossovers (MACD)': (
-                        ['Ticker', 'Final Quant Score', 'MACD_Signal', 'Last Price', 'Trend (50/200 Day MA)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'],
-                        ['Ticker', 'Score', 'MACD', 'Price', 'Trend', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']
-                    ),
-                    'Stocks Currently Near Support': (
-                        ['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'],
-                        ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']
-                    )
+                    'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']),
+                    'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)', 'Next Earnings Date', 'Shares to Buy ($50 Risk)'], ['Ticker', 'Score', 'Sector', 'Price', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %', 'Earnings', 'Shares']),
+                    'Top Quant & High R-R (Ratio > 1)': (['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Last Price', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)', 'Shares to Buy ($50 Risk)', 'Next Earnings Date'], ['Ticker', 'Score', 'R/R', 'Price', 'Stop Loss', 'Fib Target', 'Headline', 'Div %', 'Shares', 'Earnings']),
+                    'Top 10 Undervalued (Graham)': (['Ticker', 'Final Quant Score', 'Last Price', 'Fair Price (Graham)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'], ['Ticker', 'Score', 'Price', 'Graham Price', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']),
+                    'New Bullish Crossovers (MACD)': (['Ticker', 'Final Quant Score', 'MACD_Signal', 'Last Price', 'Trend (50/200 Day MA)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'], ['Ticker', 'Score', 'MACD', 'Price', 'Trend', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %']),
+                    'Stocks Currently Near Support': (['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'], ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Fib Target', 'Headline', 'Div %'])
                 }
 
                 if title in cols_map:
                     cols, headers = cols_map[title]
-                    existing_cols = [c for c in cols if c in df_reset.columns]
-                    df_pdf = df_reset[existing_cols]
+                    existing_cols = [c for c in cols if c in df_formatted.columns]
+                    df_pdf = df_formatted[existing_cols]
                     df_pdf.columns = [headers[cols.index(c)] for c in existing_cols]
                 else:
-                    df_pdf = df_reset
+                    df_pdf = df_formatted
 
                 data = [df_pdf.columns.tolist()] + df_pdf.values.tolist()
                 formatted_data = [data[0]]
@@ -440,7 +441,7 @@ def run_full_analysis(CONFIG):
                 table = Table(formatted_data, hAlign='LEFT')
                 table_style = TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.green),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitespoke),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                     ('FONTSIZE', (0, 0), (-1, 0), 10),
@@ -475,13 +476,12 @@ def run_full_analysis(CONFIG):
     return True
 
 
-# --- واجهة مستخدم Streamlit الرئيسية ---
+# --- ⭐️ واجهة مستخدم Streamlit الرئيسية (معدلة) ⭐️ ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
     st.title("SPUS Quantitative Analysis Dashboard")
     st.markdown("لوحة متابعة لتحليل محفظة SPUS بناءً على عوامل متعددة (قيمة، زخم، جودة، حجم).")
 
-    # (load_config سيستخدم BASE_DIR المدمج فيه)
     CONFIG = load_config('config.json')
 
     if CONFIG is None:
@@ -512,7 +512,7 @@ def main():
 
     if data_sheets is None:
         st.warning("لم يتم العثور على ملف نتائج (`spus_analysis_results.xlsx`).")
-        st.info("👈 يرجى الضغط على زر 'Run Full Analysis' في الشريط الجبي لبدء التحليل الأول.")
+        st.info("👈 يرجى الضغط على زر 'Run Full Analysis' في الشريط الجانبي لبدء التحليل الأول.")
     else:
         st.success(f"يتم الآن عرض البيانات من آخر تحليل (بتاريخ: {datetime.fromtimestamp(mod_time).strftime('%Y-%m-%d %H:%M:%S')})")
 
@@ -527,7 +527,44 @@ def main():
             with tabs[i]:
                 st.header(sheet_name)
                 df_to_show = data_sheets[sheet_name]
-                st.dataframe(df_to_show)
+
+                # --- ⭐️⭐️ بداية التعديل: إضافة الرسوم البيانية ⭐️⭐️ ---
+
+                # نحتاج إلى 'Ticker' كعمود للرسوم البيانية
+                chart_df = df_to_show.copy().reset_index()
+
+                if sheet_name == 'Top 20 Final Quant Score':
+                    st.subheader("أعلى 20 شركة حسب التقييم (Quant Score)")
+                    # تحويل الأعمدة النصية (بسبب الإكسل) إلى أرقام للرسم
+                    chart_df['Final Quant Score'] = pd.to_numeric(chart_df['Final Quant Score'], errors='coerce')
+                    chart_df.dropna(subset=['Final Quant Score'], inplace=True)
+                    st.bar_chart(chart_df.sort_values('Final Quant Score', ascending=False),
+                                 x='Ticker', y='Final Quant Score', color="#00A600") # لون أخضر
+
+                elif sheet_name == 'Top Quant & High R-R':
+                    st.subheader("أفضل الشركات (تقييم عالي ونسبة مخاطرة/عائد > 1)")
+                    chart_df['Risk/Reward Ratio'] = pd.to_numeric(chart_df['Risk/Reward Ratio'], errors='coerce')
+                    chart_df.dropna(subset=['Risk/Reward Ratio'], inplace=True)
+                    st.bar_chart(chart_df.sort_values('Risk/Reward Ratio', ascending=False),
+                                 x='Ticker', y='Risk/Reward Ratio', color="#004FB0") # لون أزرق
+
+                elif sheet_name == 'Top 10 by Market Cap (SPUS)':
+                    st.subheader("أكبر 10 شركات (من محفظة SPUS)")
+                    # Market Cap تأتي كرقم كبير، لا نحتاج لتحويلها
+                    chart_df['Market Cap'] = pd.to_numeric(chart_df['Market Cap'], errors='coerce')
+                    chart_df.dropna(subset=['Market Cap'], inplace=True)
+                    st.bar_chart(chart_df.sort_values('Market Cap', ascending=False),
+                                 x='Ticker', y='Market Cap')
+
+                st.divider() # فاصل بين الرسم البياني والجدول
+
+                # --- ⭐️⭐️ نهاية تعديل الرسوم البيانية ⭐️⭐️ ---
+
+
+                # --- ⭐️⭐️ تعديل العرض: استخدام الدالة الجديدة للتنسيق ⭐️⭐️ ---
+                st.dataframe(style_dataframe_text_only(df_to_show), use_container_width=True)
+                # --- ⭐️⭐️ نهاية التعديل ⭐️⭐️ ---
+
 
                 csv = df_to_show.to_csv(index=True).encode('utf-8')
                 st.download_button(

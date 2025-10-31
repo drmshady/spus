@@ -1,0 +1,23 @@
+{
+    "RSI_WINDOW": 14,
+    "SHORT_MA_WINDOW": 50,
+    "LONG_MA_WINDOW": 200,
+    "MIN_DATA_POINTS_MOMENTUM": 252,
+    "MACD_SHORT_SPAN": 12,
+    "MACD_LONG_SPAN": 26,
+    "MACD_SIGNAL_SPAN": 9,
+    "PRICE_THRESHOLD_PERCENT": 2.0,
+    "MAX_CONCURRENT_WORKERS": 10,
+    "HISTORICAL_DATA_PERIOD": "2y",
+    "EXCLUDE_TICKERS": [
+        "BRK.B",
+        "BF.B",
+        "CASH&OTHER",
+        "003654100CVR"
+    ],
+    "HISTORICAL_DATA_DIR": "./historical_stock_data",
+    "EXCEL_FILE_PATH": "./spus_analysis_results.xlsx",
+    "LOG_FILE_PATH": "./spus_analysis.log",
+    "SPUS_HOLDINGS_CSV_PATH": "./TidalFG_Holdings_SPUS.csv",
+    "TICKER_LIMIT": 0
+}

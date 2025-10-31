@@ -21,15 +21,19 @@ import pandas as pd
 import os
 import time
 from datetime import datetime
+import sys  # ⭐️ --- (1) إضافة مكتبة النظام ---
 
-# --- ⭐️ NEW: Define Base Directory ---
-# Gets the absolute path to the directory where this script (streamlit_app.py) is located.
+# --- ⭐️ (2) إصلاح مسار الاستيراد (Import Path Fix) ⭐️ ---
+# الحصول على المسار المطلق للمجلد الذي يوجد به هذا الملف
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# --- ⭐️ END NEW ---
+# إضافة هذا المجلد إلى بداية مسارات البحث الخاصة بـ Python
+# هذا يضمن أن Python سيبحث في هذا المجلد أولاً
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+# --- ⭐️ نهاية الإصلاح ⭐️ ---
 
 
 # --- استيراد الدوال من ملف spus.py الخاص بك ---
-# (يفترض أن ملف spus.py موجود في نفس المجلد)
 try:
     from spus import (
         load_config,
@@ -38,8 +42,14 @@ try:
         calculate_support_resistance,
         calculate_financials_and_fair_price
     )
-except ImportError:
-    st.error("خطأ: لم يتم العثور على ملف 'spus.py'. يرجى التأكد من وجوده في نفس المجلد.")
+except ImportError as e:  # ⭐️ --- (3) تحسين رسالة الخطأ ---
+    st.error("خطأ: فشل استيراد 'spus.py'.")
+    st.error(f"تفاصيل الخطأ: {e}")
+    st.error(f"المسار الذي يتم البحث فيه: {BASE_DIR}")
+    st.error("يرجى التأكد من وجود ملف 'spus.py' في نفس المجلد مع 'streamlit_app.py' وإعادة تشغيل التطبيق.")
+    st.stop()
+except Exception as e:
+    st.error(f"خطأ غير متوقع أثناء استيراد spus.py: {e}")
     st.stop()
 
 # --- استيراد المكتبات اللازمة لوظيفة التحليل الرئيسية ---
@@ -67,17 +77,14 @@ def load_excel_data(excel_path):
     يقرأ ملف الإكسل وجميع الشيتات الموجودة به.
     يتم إعادة تحميل البيانات فقط إذا تغير الملف.
     """
-    # --- ⭐️ MODIFIED: Use absolute path ---
+    # (استخدام BASE_DIR لضمان المسار الصحيح)
     abs_excel_path = os.path.join(BASE_DIR, excel_path)
-    # --- ⭐️ END MODIFIED ---
 
     if not os.path.exists(abs_excel_path):
         return None, None
 
     try:
-        # الحصول على وقت آخر تعديل للملف (لاستخدامه في الكاش)
         mod_time = os.path.getmtime(abs_excel_path)
-
         xls = pd.ExcelFile(abs_excel_path)
         sheet_names = xls.sheet_names
         data_sheets = {}
@@ -107,9 +114,8 @@ def run_full_analysis(CONFIG):
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            # --- ⭐️ MODIFIED: Use absolute path ---
+            # (استخدام BASE_DIR لضمان المسار الصحيح)
             logging.FileHandler(os.path.join(BASE_DIR, CONFIG['LOG_FILE_PATH'])),
-            # --- ⭐️ END MODIFIED ---
             logging.StreamHandler()
         ]
     )
@@ -128,12 +134,11 @@ def run_full_analysis(CONFIG):
         ticker_symbols = ticker_symbols[:CONFIG['TICKER_LIMIT']]
         status_text.info(f"التحليل يقتصر على أول {CONFIG['TICKER_LIMIT']} شركة فقط.")
 
-    # --- ⭐️ MODIFIED: Use absolute path ( handled by functions now, but good practice) ---
+    # (المسارات المطلقة يتم التعامل معها الآن داخل دوال spus.py)
     historical_data_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
     if not os.path.exists(historical_data_dir): os.makedirs(historical_data_dir)
     info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if not os.path.exists(info_cache_dir): os.makedirs(info_cache_dir)
-    # --- ⭐️ END MODIFIED ---
 
     momentum_data = {}
     rsi_data = {}
@@ -263,13 +268,14 @@ def run_full_analysis(CONFIG):
         except Exception:
             pass
 
-        # تنسيق قيم النسبة المئوية
         try: div_yield_str = f"{fin_info.get('Dividend Yield'):.2f}"
         except: div_yield_str = "N/A"
         try: momentum_str = f"{momentum_data.get(ticker, 'N/A'):.2f}"
         except: momentum_str = "N/A"
         try: roe_str = f"{fin_info.get('Return on Equity (ROE)'):.2f}"
         except: roe_str = "N/A"
+        try: risk_pct_str = f"{risk_percentages.get(ticker, 'N/A'):.2f}"
+        except: risk_pct_str = "N/A"
 
 
         result_data = {
@@ -283,7 +289,7 @@ def run_full_analysis(CONFIG):
             'Trend (50/200 Day MA)': trend_data.get(ticker, "N/A"),
             'Price vs. Levels': comparison_results.get(ticker, "N/A"),
             'Cut Loss Level (Support)': support_resistance.get('Support'),
-            'Risk % (to Support)': risk_percentages.get(ticker, "N/A"), # Add this
+            'Risk % (to Support)': risk_pct_str, # تم التعديل هنا
             'Fib 161.8% Target': support_resistance.get('Fib_161_8'),
             'Risk/Reward Ratio': risk_reward_ratios.get(ticker, "N/A"),
             'Shares to Buy ($50 Risk)': shares_to_buy_str,
@@ -323,30 +329,40 @@ def run_full_analysis(CONFIG):
         (results_df['Z_Size'] * FACTOR_WEIGHTS['SIZE'])
     )
 
+    # تحويل الأعمدة الرقمية قبل التنسيق
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
+    results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
 
-    # تنسيق الأعمدة قبل الحفظ
-    for col in ['Last Price', 'Fair Price (Graham)', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio', 'Risk % (to Support)']:
-        if col in results_df.columns:
-            results_df[col] = pd.to_numeric(results_df[col], errors='coerce').apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
 
-    results_df.set_index('Ticker', inplace=True)
+    # فرز البيانات
     results_df.sort_values(by='Final Quant Score', ascending=False, inplace=True)
+    results_df.set_index('Ticker', inplace=True)
 
+    # إنشاء جداول الملخص
     top_10_market_cap = results_df.sort_values(by='Market Cap', ascending=False).head(10)
     top_20_quant = results_df.head(20)
     top_10_undervalued = results_df[results_df['Valuation (Graham)'] == 'Undervalued (Graham)'].sort_values(by='Final Quant Score', ascending=False).head(10)
     new_crossovers = results_df[results_df['MACD_Signal'] == 'Bullish Crossover (Favorable)'].sort_values(by='Final Quant Score', ascending=False).head(10)
     near_support = results_df[results_df['Price vs. Levels'] == 'Near Support'].sort_values(by='Final Quant Score', ascending=False).head(10)
-    top_quant_high_rr = top_20_quant[pd.to_numeric(top_20_quant['Risk/Reward Ratio'], errors='coerce') > 1].sort_values(by='Risk/Reward Ratio', ascending=False)
+    top_quant_high_rr = top_20_quant[top_20_quant['Risk/Reward Ratio'] > 1].sort_values(by='Risk/Reward Ratio', ascending=False)
+
+    # تنسيق الأعمدة للعرض في الإكسل (بعد إنشاء الجداول الفرعية)
+    format_cols = ['Last Price', 'Fair Price (Graham)', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio', 'Risk % (to Support)']
+    for df in [results_df, top_10_market_cap, top_20_quant, top_10_undervalued, new_crossovers, near_support, top_quant_high_rr]:
+        for col in format_cols:
+            if col in df.columns:
+                # تحويل العمود للتأكد من أنه رقمي أولاً
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                # تطبيق التنسيق
+                df[col] = df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+
 
     status_text.info("... (6/7) جارٍ حفظ تقرير الإكسل...")
     progress_bar.progress(0.98, text="Saving Excel report...")
 
-    # --- ⭐️ MODIFIED: Use absolute path ---
+    # (استخدام BASE_DIR لضمان المسار الصحيح)
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
-    # --- ⭐️ END MODIFIED ---
 
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
@@ -368,22 +384,18 @@ def run_full_analysis(CONFIG):
     if REPORTLAB_AVAILABLE:
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            # --- ⭐️ MODIFIED: Use absolute path (excel_file_path is already absolute) ---
-            base_pdf_path = os.path.splitext(excel_file_path)[0]
+            base_pdf_path = os.path.splitext(excel_file_path)[0] # (excel_file_path هو مسار مطلق الآن)
             pdf_file_path = f"{base_pdf_path}_{timestamp}.pdf"
-            # --- ⭐️ END MODIFIED ---
 
             doc = SimpleDocTemplate(pdf_file_path, pagesize=landscape(letter))
             elements = []
             styles = getSampleStyleSheet()
 
-            # --- ⭐️ PDF HELPER FUNCTION (COPIED FROM SPUS.PY) ---
             def create_pdf_table(title, df):
                 if df.empty:
                     return [Paragraph(f"No data for: {title}", styles['h2']), Spacer(1, 0.1*inch)]
                 df_reset = df.reset_index()
 
-                # تعريف الأعمدة المطلوبة لكل جدول
                 cols_map = {
                     'Top 10 by Market Cap (from SPUS)': (
                         ['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Latest Headline', 'Dividend Yield (%)'],
@@ -413,10 +425,8 @@ def run_full_analysis(CONFIG):
 
                 if title in cols_map:
                     cols, headers = cols_map[title]
-                    # التأكد من وجود الأعمدة فقط
                     existing_cols = [c for c in cols if c in df_reset.columns]
                     df_pdf = df_reset[existing_cols]
-                    # إعادة تسمية الأعمدة الموجودة فقط
                     df_pdf.columns = [headers[cols.index(c)] for c in existing_cols]
                 else:
                     df_pdf = df_reset
@@ -424,13 +434,13 @@ def run_full_analysis(CONFIG):
                 data = [df_pdf.columns.tolist()] + df_pdf.values.tolist()
                 formatted_data = [data[0]]
                 for row in data[1:]:
-                    new_row = [str(item) for item in row] # تحويل كل شيء إلى نص لأن التنسيق تم في DF
+                    new_row = [str(item) for item in row]
                     formatted_data.append(new_row)
 
                 table = Table(formatted_data, hAlign='LEFT')
                 table_style = TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.green),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitespoke),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                     ('FONTSIZE', (0, 0), (-1, 0), 10),
@@ -471,17 +481,15 @@ def main():
     st.title("SPUS Quantitative Analysis Dashboard")
     st.markdown("لوحة متابعة لتحليل محفظة SPUS بناءً على عوامل متعددة (قيمة، زخم، جودة، حجم).")
 
-    # --- ⭐️ MODIFIED: Use absolute path (load_config now handles this) ---
+    # (load_config سيستخدم BASE_DIR المدمج فيه)
     CONFIG = load_config('config.json')
-    # --- ⭐️ END MODIFIED ---
 
     if CONFIG is None:
         st.error("خطأ فادح: لم يتم العثور على ملف 'config.json'. لا يمكن تشغيل التطبيق.")
+        st.error(f"المسار المتوقع: {os.path.join(BASE_DIR, 'config.json')}")
         st.stop()
 
-    # --- ⭐️ MODIFIED: Use relative path from config ---
     EXCEL_FILE = CONFIG.get('EXCEL_FILE_PATH', './spus_analysis_results.xlsx')
-    # --- ⭐️ END MODIFIED ---
 
     with st.sidebar:
         st.image("https://www.sp-funds.com/wp-content/uploads/2022/02/SP-Funds-Logo-Primary-Wht-1.svg", width=200)
@@ -504,7 +512,7 @@ def main():
 
     if data_sheets is None:
         st.warning("لم يتم العثور على ملف نتائج (`spus_analysis_results.xlsx`).")
-        st.info("👈 يرجى الضغط على زر 'Run Full Analysis' في الشريط الجانبي لبدء التحليل الأول.")
+        st.info("👈 يرجى الضغط على زر 'Run Full Analysis' في الشريط الجبي لبدء التحليل الأول.")
     else:
         st.success(f"يتم الآن عرض البيانات من آخر تحليل (بتاريخ: {datetime.fromtimestamp(mod_time).strftime('%Y-%m-%d %H:%M:%S')})")
 

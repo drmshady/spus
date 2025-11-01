@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 import sys
 import glob
-import numpy as np # <-- Make sure numpy is imported
+import numpy as np # Import numpy
 
 # --- إصلاح مسار الاستيراد (Import Path Fix) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,8 +50,9 @@ except ImportError:
     logging.warning("مكتبة 'reportlab' غير موجودة. لن يتم إنشاء تقارير PDF.")
 
 
-# --- دالة لقراءة بيانات الإكسل مع Caching (Unchanged) ---
-@st.cache_data
+# --- ⭐️ UPDATED: دالة لقراءة بيانات الإكسل ⭐️ ---
+# This function no longer needs to be cached, as the main
+# analysis function that *creates* the Excel file is now cached.
 def load_excel_data(excel_path):
     abs_excel_path = os.path.join(BASE_DIR, excel_path)
     if not os.path.exists(abs_excel_path):
@@ -156,33 +157,16 @@ def calculate_robust_zscore(series):
     z_score = (series - median) / (1.4826 * mad)
     return z_score
 
-# --- Cache Clearing Function (Unchanged) ---
-def clear_cache_files(CONFIG):
-    """Deletes all .feather and .json files from cache directories."""
-    deleted_count = 0
-    errors = 0
-    hist_cache_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
-    if os.path.exists(hist_cache_dir):
-        for f in glob.glob(os.path.join(hist_cache_dir, "*.feather")):
-            try:
-                os.remove(f)
-                deleted_count += 1
-            except Exception as e:
-                logging.error(f"Failed to delete {f}: {e}")
-                errors += 1
-    info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
-    if os.path.exists(info_cache_dir):
-        for f in glob.glob(os.path.join(info_cache_dir, "*.json")):
-            try:
-                os.remove(f)
-                deleted_count += 1
-            except Exception as e:
-                logging.error(f"Failed to delete {f}: {e}")
-                errors += 1
-    return deleted_count, errors
+# --- ⭐️ REMOVED clear_cache_files function ---
+
 
 # --- ⭐️ UPDATED: دالة تشغيل التحليل ⭐️ ---
+@st.cache_data(show_spinner=False) # <-- ⭐️ NEW: Wrap main function in Streamlit cache
 def run_full_analysis(CONFIG):
+    """
+    This function now handles the entire data fetch and analysis pipeline.
+    Its output (the dict of data sheets) is cached in memory by Streamlit.
+    """
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
     status_text.info("يتم الآن بدء التحليل...")
@@ -196,21 +180,18 @@ def run_full_analysis(CONFIG):
         ]
     )
     status_text.info("... (1/7) جارٍ جلب قائمة الرموز (Tickers)...")
-    ticker_symbols = fetch_spus_tickers() 
+    ticker_symbols = fetch_spus_tickers() # <-- Fetches fresh tickers
     if not ticker_symbols:
         status_text.warning("لم يتم العثور على رموز. تم إلغاء التحليل.")
-        return False
+        return None, None # Return value must match cache expectation
+        
     exclude_tickers = CONFIG['EXCLUDE_TICKERS']
     ticker_symbols = [ticker for ticker in ticker_symbols if ticker not in exclude_tickers]
     if CONFIG['TICKER_LIMIT'] > 0:
         ticker_symbols = ticker_symbols[:CONFIG['TICKER_LIMIT']]
         status_text.info(f"التحليل يقتصر على أول {CONFIG['TICKER_LIMIT']} شركة فقط.")
-    historical_data_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
-    if not os.path.exists(historical_data_dir): os.makedirs(historical_data_dir)
-    info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
-    if not os.path.exists(info_cache_dir): os.makedirs(info_cache_dir)
-    
-    # --- ⭐️ REMOVED Pre-fetch (no longer needed) ---
+
+    # --- ⭐️ REMOVED cache directory creation ---
 
     momentum_data = {}
     volatility_data = {} 
@@ -229,6 +210,7 @@ def run_full_analysis(CONFIG):
     start_time = time.time()
     processed_count = 0
     total_tickers = len(ticker_symbols)
+    
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_ticker = {
             executor.submit(process_ticker, ticker): ticker
@@ -307,7 +289,7 @@ def run_full_analysis(CONFIG):
     tickers_to_report = list(last_prices.keys()) 
     if not tickers_to_report:
         status_text.warning("لا توجد بيانات كافية لإنشاء التقرير.")
-        return False
+        return None, None
     results_list = []
     for ticker in tickers_to_report:
         fin_info = financial_data.get(ticker, {})
@@ -325,8 +307,6 @@ def run_full_analysis(CONFIG):
                     shares_to_buy_str = "N/A (Price below Support)"
         except Exception:
             pass
-        
-        # --- ⭐️ UPDATED Result Data (Removed finviz fields) ---
         result_data = {
             'Ticker': ticker,
             'Last Price': last_prices.get(ticker, pd.NA),
@@ -357,20 +337,13 @@ def run_full_analysis(CONFIG):
     
     results_df = pd.DataFrame(results_list)
 
-    # --- ⭐️ NEW: Self-Calculate Sector Medians ⭐️ ---
     status_text.info("... (5/7) Calculating sector medians...")
     results_df['Forward P/E'] = pd.to_numeric(results_df['Forward P/E'], errors='coerce')
     results_df['P/B Ratio'] = pd.to_numeric(results_df['P/B Ratio'], errors='coerce')
-    
-    # Calculate medians (more robust than mean)
     sector_pe_median = results_df.groupby('Sector')['Forward P/E'].median()
     sector_pb_median = results_df.groupby('Sector')['P/B Ratio'].median()
-    
-    # Map medians back to the DataFrame
     results_df['Sector P/E'] = results_df['Sector'].map(sector_pe_median)
     results_df['Sector P/B'] = results_df['Sector'].map(sector_pb_median)
-    
-    # Define a helper for relative signals
     def get_relative_signal(row_val, sector_val):
         if pd.isna(row_val) or pd.isna(sector_val) or sector_val <= 0:
             return "N/A"
@@ -378,19 +351,12 @@ def run_full_analysis(CONFIG):
             return "Undervalued (Sector)"
         else:
             return "Overvalued (Sector)"
-
     results_df['Relative P/E'] = results_df.apply(lambda row: get_relative_signal(row['Forward P/E'], row['Sector P/E']), axis=1)
     results_df['Relative P/B'] = results_df.apply(lambda row: get_relative_signal(row['P/B Ratio'], row['Sector P/B']), axis=1)
-    # --- ⭐️ END NEW ⭐️ ---
-
-    # --- 6-FACTOR MODEL LOGIC (Unchanged) ---
+    
     FACTOR_WEIGHTS = {
-        'VALUE': 0.25, 
-        'MOMENTUM': 0.15, 
-        'QUALITY': 0.20, 
-        'SIZE': 0.10, 
-        'LOW_VOL': 0.15,
-        'TECHNICAL': 0.15
+        'VALUE': 0.25, 'MOMENTUM': 0.15, 'QUALITY': 0.20, 
+        'SIZE': 0.10, 'LOW_VOL': 0.15, 'TECHNICAL': 0.15
     }
     graham_price = pd.to_numeric(results_df['Fair Price (Graham)'], errors='coerce')
     last_price_pd = pd.to_numeric(results_df['Last Price'], errors='coerce')
@@ -429,23 +395,26 @@ def run_full_analysis(CONFIG):
         (results_df['Z_Low_Volatility'] * FACTOR_WEIGHTS['LOW_VOL']) +
         (results_df['Z_Technical'] * FACTOR_WEIGHTS['TECHNICAL'])
     )
-    # --- END 6-FACTOR MODEL ---
-
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
     results_df.sort_values(by='Final Quant Score', ascending=False, inplace=True)
     results_df.set_index('Ticker', inplace=True)
-    top_10_market_cap = results_df.sort_values(by='Market Cap', ascending=False).head(10)
-    top_20_quant = results_df.head(20)
-    top_10_undervalued = results_df[
-        (results_df['Valuation (Graham)'] == 'Undervalued (Graham)') |
-        (results_df['Relative P/E'] == 'Undervalued (Sector)')
-    ].sort_values(by='Final Quant Score', ascending=False).head(10)
-    new_crossovers = results_df[results_df['MACD_Signal'] == 'Bullish Crossover (Favorable)'].sort_values(by='Final Quant Score', ascending=False).head(10)
-    near_support = results_df[results_df['Price vs. Levels'] == 'Near Support'].sort_values(by='Final Quant Score', ascending=False).head(10)
-    top_quant_high_rr = top_20_quant[pd.to_numeric(top_20_quant['Risk/Reward Ratio'], errors='coerce') > 1].sort_values(by='Risk/Reward Ratio', ascending=False)
     
+    # Create a dictionary of the resulting dataframes
+    data_sheets = {
+        'Top 20 Final Quant Score': results_df.head(20),
+        'Top Quant & High R-R': results_df[pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce') > 1].head(20).sort_values(by='Risk/Reward Ratio', ascending=False),
+        'Top 10 Undervalued (Rel & Graham)': results_df[
+            (results_df['Valuation (Graham)'] == 'Undervalued (Graham)') |
+            (results_df['Relative P/E'] == 'Undervalued (Sector)')
+        ].sort_values(by='Final Quant Score', ascending=False).head(10),
+        'New Bullish Crossovers (MACD)': results_df[results_df['MACD_Signal'] == 'Bullish Crossover (Favorable)'].sort_values(by='Final Quant Score', ascending=False).head(10),
+        'Stocks Currently Near Support': results_df[results_df['Price vs. Levels'] == 'Near Support'].sort_values(by='Final Quant Score', ascending=False).head(10),
+        'Top 10 by Market Cap (SPUS)': results_df.sort_values(by='Market Cap', ascending=False).head(10),
+        'All Results': results_df
+    }
+
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
@@ -462,17 +431,16 @@ def run_full_analysis(CONFIG):
                     if col in df_copy.columns:
                         df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                 return df_copy
-            format_for_excel(results_df).to_excel(writer, sheet_name='All Results', index=True)
-            format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
-            format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
-            format_for_excel(top_quant_high_rr).to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
-            format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Rel & Graham)', index=True)
-            format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
-            format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
+            
+            # Save all sheets from the dictionary
+            for sheet_name, df in data_sheets.items():
+                 format_for_excel(df).to_excel(writer, sheet_name=sheet_name, index=True)
+
         status_text.info(f"تم حفظ تقرير الإكسل بنجاح: {excel_file_path}")
     except Exception as e:
         st.error(f"فشل حفظ ملف الإكسل: {e}")
-        return False
+        return None, None
+        
     status_text.info("... (7/7) جارٍ حفظ تقرير PDF...")
     progress_bar.progress(0.99, text="Saving PDF report...")
     if REPORTLAB_AVAILABLE:
@@ -490,7 +458,7 @@ def run_full_analysis(CONFIG):
                 cols_map = {
                     'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Relative P/E', 'Risk/Reward Ratio', 'Volatility (1Y)', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'Rel. P/E', 'R/R', 'Volatility', 'Div %']),
                     'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Relative P/E', 'Valuation (Graham)', 'Risk/Reward Ratio', 'Volatility (1Y)', '1-Year Momentum (12-1) (%)'], ['Ticker', 'Score', 'Sector', 'Price', 'Rel. P/E', 'Graham', 'R/R', 'Volatility', 'Momentum']),
-                    'Top Quant & High R-R (Ratio > 1)': (['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Relative P/E', 'Last Price', 'Volatility (1Y)', 'Cut Loss Level (Support)'], ['Ticker', 'Score', 'R/R', 'Rel. P/E', 'Price', 'Volatility', 'Stop Loss']),
+                    'Top Quant & High R-R': (['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Relative P/E', 'Last Price', 'Volatility (1Y)', 'Cut Loss Level (Support)'], ['Ticker', 'Score', 'R/R', 'Rel. P/E', 'Price', 'Volatility', 'Stop Loss']),
                     'Top 10 Undervalued (Rel & Graham)': (['Ticker', 'Final Quant Score', 'Relative P/E', 'Valuation (Graham)', 'Last Price', 'Fair Price (Graham)', 'Sector P/E', 'Forward P/E'], ['Ticker', 'Score', 'Rel. P/E', 'Graham', 'Price', 'Graham Price', 'Sector P/E', 'Stock P/E']),
                     'New Bullish Crossovers (MACD)': (['Ticker', 'Final Quant Score', 'MACD_Signal', 'Last Price', 'Trend (50/200 Day MA)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Relative P/E'], ['Ticker', 'Score', 'MACD', 'Price', 'Trend', 'R/R', 'Stop Loss', 'Rel. P/E']),
                     'Stocks Currently Near Support': (['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Volatility (1Y)'], ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Volatility'])
@@ -523,7 +491,7 @@ def run_full_analysis(CONFIG):
                 SUMMARY_DESCRIPTIONS = {
                     'Top 10 by Market Cap (from SPUS)': "This table shows the 10 largest companies in the SPUS portfolio, sorted by their market capitalization.",
                     'Top 20 by Final Quant Score': "This table ranks the top 20 stocks based on the combined 6-factor quantitative score (Value, Momentum, Quality, Size, Volatility, Technicals).",
-                    'Top Quant & High R-R (Ratio > 1)': "This table filters the top-ranked stocks to show only those with a favorable Risk/Reward Ratio (greater than 1).",
+                    'Top Quant & High R-R': "This table filters the top-ranked stocks to show only those with a favorable Risk/Reward Ratio (greater than 1).",
                     'Top 10 Undervalued (Rel & Graham)': "This table highlights the top 10 stocks considered 'Undervalued' by either the Graham Number or relative sector P/E.",
                     'New Bullish Crossovers (MACD)': "This table lists stocks that have just generated a 'Bullish Crossover' MACD signal, a positive momentum indicator.",
                     'Stocks Currently Near Support': "This table identifies stocks whose current price is very close to their 90-day technical support level, a potential entry point."
@@ -536,23 +504,29 @@ def run_full_analysis(CONFIG):
                 elements.append(Spacer(1, 0.25*inch))
                 return elements
             elements.append(Paragraph(f"SPUS Analysis Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['h1']))
-            elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", top_10_market_cap))
-            elements.extend(create_pdf_table("Top 20 by Final Quant Score", top_20_quant))
-            elements.extend(create_pdf_table("Top Quant & High R-R (Ratio > 1)", top_quant_high_rr))
-            elements.extend(create_pdf_table("Top 10 Undervalued (Rel & Graham)", top_10_undervalued))
-            elements.extend(create_pdf_table("New Bullish Crossovers (MACD)", new_crossovers))
-            elements.extend(create_pdf_table("Stocks Currently Near Support", near_support))
+            # --- ⭐️ Create PDF from data_sheets dictionary ---
+            elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", data_sheets['Top 10 by Market Cap (SPUS)']))
+            elements.extend(create_pdf_table("Top 20 by Final Quant Score", data_sheets['Top 20 Final Quant Score']))
+            elements.extend(create_pdf_table("Top Quant & High R-R", data_sheets['Top Quant & High R-R']))
+            elements.extend(create_pdf_table("Top 10 Undervalued (Rel & Graham)", data_sheets['Top 10 Undervalued (Rel & Graham)']))
+            elements.extend(create_pdf_table("New Bullish Crossovers (MACD)", data_sheets['New Bullish Crossovers (MACD)']))
+            elements.extend(create_pdf_table("Stocks Currently Near Support", data_sheets['Stocks Currently Near Support']))
             doc.build(elements)
             status_text.info(f"تم حفظ تقرير PDF بنجاح: {pdf_file_path}")
         except Exception as e:
             st.error(f"فشل إنشاء تقرير PDF: {e}")
     else:
         st.warning("تم تخطي إنشاء PDF. (مكتبة reportlab غير مثبتة)")
+    
     progress_bar.progress(1.0, text="اكتمل التحليل!")
     status_text.success("اكتمل التحليل بنجاح!")
-    return True
+    
+    # Return the results so they can be cached
+    return data_sheets, datetime.now().timestamp()
+# --- ⭐️ END UPDATED FUNCTION ---
 
-# --- واجهة مستخدم Streamlit الرئيسية (Unchanged) ---
+
+# --- ⭐️ UPDATED: واجهة مستخدم Streamlit الرئيسية ⭐️ ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
     st.title("SPUS Quantitative Analysis Dashboard")
@@ -568,37 +542,19 @@ def main():
     EXCEL_FILE = CONFIG.get('EXCEL_FILE_PATH', './spus_analysis_results.xlsx')
     ABS_EXCEL_PATH = os.path.join(BASE_DIR, EXCEL_FILE)
 
-
     with st.sidebar:
         st.image("https://www.sp-funds.com/wp-content/uploads/2022/02/SP-Funds-Logo-Primary-Wht-1.svg", width=200)
         st.header("أدوات التحكم")
 
+        # --- ⭐️ UPDATED: Run button now clears the cache ---
         if st.button("Run Full Analysis (تشغيل التحليل الكامل)", type="primary"):
-            with st.spinner("جارٍ تشغيل التحليل الكامل... قد يستغرق هذا عدة دقائق..."):
-                analysis_success = run_full_analysis(CONFIG)
-                if analysis_success:
-                    st.cache_data.clear()
-                    st.success("اكتمل التحليل! تم تحديث البيانات.")
-                    st.rerun()
-                else:
-                    st.error("فشل التحليل. يرجى مراجعة اللوج (spus_analysis.log).")
+            st.cache_data.clear() # <-- Clears the memory cache
+            st.success("Cache cleared. Running fresh analysis...")
+            st.rerun() # Re-run the script to trigger the cached function
         
         st.divider()
-        st.header("Cache Management (إدارة التخزين المؤقت)")
-        st.warning("إذا كانت الأعمدة فارغة (سوداء)، اضغط هذا الزر أولاً ثم أعد التحليل.")
         
-        if st.button("Clear All Cached Data (مسح ذاكرة التخزين المؤقت)"):
-            with st.spinner("Deleting cache files..."):
-                try:
-                    deleted_count, errors = clear_cache_files(CONFIG)
-                    st.success(f"Successfully deleted {deleted_count} cache files.")
-                    if errors > 0:
-                        st.error(f"Failed to delete {errors} files. Check logs.")
-                    st.info("Please 'Run Full Analysis' again to rebuild the cache.")
-                except Exception as e:
-                    st.error(f"An error occurred while clearing cache: {e}")
-
-        st.divider()
+        # --- ⭐️ REMOVED: Cache Management section ---
 
         st.header("Downloads")
         excel_path, pdf_path = get_latest_reports(ABS_EXCEL_PATH)
@@ -623,7 +579,7 @@ def main():
                     mime="application/pdf",
                 )
         else:
-            st.info("لم يتم العтa العثور على تقرير PDF. سيتم إنشاؤه بعد تشغيل التحليل.")
+            st.info("لم يتم العثور على تقرير PDF. سيتم إنشاؤه بعد تشغيل التحليل.")
         
         st.divider()
         
@@ -643,9 +599,14 @@ def main():
             """)
         
         st.divider()
-        st.info("يعرض التطبيق آخر بيانات تم تحليلها. اضغط على الزر أعلاه لجلب أحدث البيانات.")
+        st.info("اضغط 'Run' لبدء التحليل. سيتم تخزين النتائج مؤقتًا.")
 
-    data_sheets, mod_time = load_excel_data(EXCEL_FILE)
+    # --- ⭐️ UPDATED: Call the cached function ---
+    # This will only run if the cache is empty (e.g., first load or after 'Run' is pressed)
+    # The spinner will show while this function is running.
+    with st.spinner("Running full analysis... This may take several minutes on first run..."):
+        data_sheets, mod_time = run_full_analysis(CONFIG)
+    # --- ⭐️ END UPDATE ---
 
     if data_sheets is None:
         st.warning("لم يتم العثور على ملف نتائج (`spus_analysis_results.xlsx`).")
@@ -655,11 +616,11 @@ def main():
 
         tab_titles = list(data_sheets.keys())
         
+        # (Tab ordering - Unchanged)
         if "Top 10 Undervalued (Graham)" in tab_titles:
             tab_titles[tab_titles.index("Top 10 Undervalued (Graham)")] = "Top 10 Undervalued (Rel & Graham)"
         elif "Top 10 Undervalued (Rel/Graham)" in tab_titles:
             tab_titles[tab_titles.index("Top 10 Undervalued (Rel/Graham)")] = "Top 10 Undervalued (Rel & Graham)"
-            
         if "All Results" in tab_titles:
             tab_titles.remove("All Results")
             tab_titles.append("All Results")

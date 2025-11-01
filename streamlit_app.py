@@ -26,8 +26,6 @@ try:
 except ImportError as e:
     st.error("خطأ: فشل استيراد 'spus.py'.")
     st.error(f"تفاصيل الخطأ: {e}")
-    st.error(f"المسار الذي يتم البحث فيه: {BASE_DIR}")
-    st.error("يرجى التأكد من وجود ملف 'spus.py' في نفس المجلد مع 'streamlit_app.py' وإعادة تشغيل التطبيق.")
     st.stop()
 except Exception as e:
     st.error(f"خطأ غير متوقع أثناء استيراد spus.py: {e}")
@@ -51,7 +49,7 @@ except ImportError:
     logging.warning("مكتبة 'reportlab' غير موجودة. لن يتم إنشاء تقارير PDF.")
 
 
-# --- دالة لقراءة بيانات الإكسل مع Caching ---
+# --- دالة لقراءة بيانات الإكسل مع Caching (Unchanged) ---
 @st.cache_data
 def load_excel_data(excel_path):
     abs_excel_path = os.path.join(BASE_DIR, excel_path)
@@ -71,17 +69,24 @@ def load_excel_data(excel_path):
         return None, None
 
 
-# --- دالة التنسيق الشرطي المتقدم للجداول (بدون تغيير) ---
+# --- ⭐️ UPDATED: دالة التنسيق الشرطي ⭐️ ---
 def apply_comprehensive_styling(df):
     """
-    يطبق تنسيقاً شاملاً على الجدول المعروض في Streamlit
+    Applies comprehensive styling, now including Volatility and new Momentum.
     """
     RELEVANT_COLUMNS = [
-        'Ticker', 'Sector', 'Last Price', 'Valuation (Graham)', 'Fair Price (Graham)',
-        'Relative P/E', 'Relative P/B', 'Forward P/E', 'Sector P/E', 'MACD_Signal',
-        'Trend (50/200 Day MA)', 'Price vs. Levels', 'Risk/Reward Ratio', 'Final Quant Score',
-        '1-Year Momentum (%)', 'Dividend Yield (%)', 'Risk % (to Support)',
-        'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Next Earnings Date', 'Latest Headline'
+        'Ticker', 'Sector', 'Last Price', 
+        'Final Quant Score', # <-- Moved to front
+        'Valuation (Graham)', 'Relative P/E', 'Relative P/B',
+        'MACD_Signal', 'Trend (50/200 Day MA)', 'Price vs. Levels',
+        'Risk/Reward Ratio', 
+        '1-Year Momentum (12-1) (%)', # <-- UPDATED
+        'Volatility (1Y)', # <-- NEW
+        'Return on Equity (ROE)', # For reference
+        'Debt/Equity', # For reference
+        'Dividend Yield (%)', # For reference
+        'Forward P/E', 'Sector P/E',
+        'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Next Earnings Date'
     ]
 
     cols_to_show = [col for col in RELEVANT_COLUMNS if col in df.columns]
@@ -93,7 +98,7 @@ def apply_comprehensive_styling(df):
 
     def highlight_text(val):
         val_str = str(val).lower()
-        if 'undervalued' in val_str or 'bullish crossover' in val_str:
+        if 'undervalued' in val_str or 'bullish' in val_str: # More general 'bullish'
             return 'color: #00A600' # أخضر
         elif 'overvalued' in val_str or 'bearish' in val_str:
             return 'color: #D30000' # أحمر
@@ -104,34 +109,49 @@ def apply_comprehensive_styling(df):
     styler = df_display.style.apply(lambda x: x.map(highlight_text), subset=text_style_cols)
 
     numeric_gradient_cols = [
-        'Final Quant Score', 'Risk/Reward Ratio', '1-Year Momentum (%)', 'Risk % (to Support)', 'Forward P/E'
+        'Final Quant Score', 'Risk/Reward Ratio', 
+        '1-Year Momentum (12-1) (%)', 
+        'Volatility (1Y)', # <-- NEW
+        'Risk % (to Support)', 'Forward P/E'
     ]
     
     for col in numeric_gradient_cols:
         if col in df_display.columns:
             df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
 
+    # Apply gradients
     if 'Final Quant Score' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn', subset=['Final Quant Score'], vmin=-2, vmax=2)
     if 'Risk/Reward Ratio' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn', subset=['Risk/Reward Ratio'], vmin=0, vmax=5)
-    if '1-Year Momentum (%)' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn', subset=['1-Year Momentum (%)'], vmin=-20, vmax=50)
+    if '1-Year Momentum (12-1) (%)' in df_display.columns:
+        styler = styler.background_gradient(cmap='RdYlGn', subset=['1-Year Momentum (12-1) (%)'], vmin=-20, vmax=50)
     if 'Risk % (to Support)' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Risk % (to Support)'], vmin=0, vmax=15)
     if 'Forward P/E' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Forward P/E'], vmin=0, vmax=40)
+    # ⭐️ NEW: Gradient for Volatility (Reversed: Low is Green)
+    if 'Volatility (1Y)' in df_display.columns:
+        styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Volatility (1Y)'], vmin=0.1, vmax=0.6)
+
 
     format_dict = {
         'Sector P/E': '{:.2f}', 'Sector P/B': '{:.2f}', 'Forward P/E': '{:.2f}',
+        'Final Quant Score': '{:.3f}',
+        'Volatility (1Y)': '{:.3f}',
+        '1-Year Momentum (12-1) (%)': '{:.2f}%',
+        'Return on Equity (ROE)': '{:.2f}%',
+        'Debt/Equity': '{:.2f}',
+        'Dividend Yield (%)': '{:.2f}%',
     }
-    styler = styler.format(format_dict, na_rep="N/A")
+    # Apply formatting, handling columns that might not be in all tabs
+    styler = styler.format(format_dict, na_rep="N/A", subset=[col for col in format_dict if col in df_display.columns])
 
     return styler
-# --- نهاية دالة التنسيق ---
+# --- ⭐️ END UPDATED FUNCTION ---
 
 
-# --- دالة العثور على أحدث التقارير (بدون تغيير) ---
+# --- دالة العثور على أحدث التقارير (Unchanged) ---
 def get_latest_reports(excel_base_path):
     base_dir = os.path.dirname(excel_base_path)
     excel_name_no_ext = os.path.splitext(os.path.basename(excel_base_path))[0]
@@ -142,10 +162,29 @@ def get_latest_reports(excel_base_path):
         latest_pdf = max(pdf_files, key=os.path.getmtime)
     excel_path = excel_base_path if os.path.exists(excel_base_path) else None
     return excel_path, latest_pdf
-# --- نهاية الدالة ---
+
+# --- ⭐️ NEW: Robust Z-Score Function ⭐️ ---
+def calculate_robust_zscore(series):
+    """
+    Calculates a robust Z-score using the Median and Median Absolute Deviation (MAD).
+    This is resistant to extreme outliers.
+    """
+    series = pd.to_numeric(series, errors='coerce')
+    median = series.median()
+    # MAD = median(|x - median(x)|)
+    mad = (series - median).abs().median()
+    
+    # Handle case where MAD is 0 (e.g., all values are the same)
+    if mad == 0:
+        return 0
+        
+    # The 1.4826 constant scales MAD to be a consistent estimator of the standard deviation
+    z_score = (series - median) / (1.4826 * mad)
+    return z_score
+# --- ⭐️ END NEW FUNCTION ---
 
 
-# --- دالة تشغيل التحليل (تم إصلاحها) ---
+# --- ⭐️ UPDATED: دالة تشغيل التحليل (Major Upgrade) ⭐️ ---
 def run_full_analysis(CONFIG):
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
@@ -162,8 +201,8 @@ def run_full_analysis(CONFIG):
         ]
     )
 
-    status_text.info("... (1/7) جارٍ جلب قائمة الرموز (Tickers) من ملف CSV")
-    ticker_symbols = fetch_spus_tickers()
+    status_text.info("... (1/7) جارٍ جلب قائمة الرموز (Tickers)...")
+    ticker_symbols = fetch_spus_tickers() # Using the (hopefully) updated function
 
     if not ticker_symbols:
         status_text.warning("لم يتم العثور على رموز. تم إلغاء التحليل.")
@@ -189,7 +228,9 @@ def run_full_analysis(CONFIG):
         except Exception as e:
             status_text.warning(f"فشل جلب بيانات القطاعات مسبقاً: {e}")
 
+    # (Dictionaries for data collection)
     momentum_data = {}
+    volatility_data = {} # <-- NEW
     rsi_data = {}
     last_prices = {}
     support_resistance_levels = {}
@@ -204,7 +245,6 @@ def run_full_analysis(CONFIG):
     MAX_WORKERS = CONFIG['MAX_CONCURRENT_WORKERS']
     status_text.info(f"... (2/7) جارٍ جلب البيانات (Concurrent) باستخدام {MAX_WORKERS} عامل...")
     start_time = time.time()
-
     processed_count = 0
     total_tickers = len(ticker_symbols)
 
@@ -221,7 +261,12 @@ def run_full_analysis(CONFIG):
                 if result['success']:
                     ticker = result['ticker']
                     processed_tickers.add(ticker)
-                    if result['momentum'] is not None: momentum_data[ticker] = result['momentum']
+                    
+                    # --- ⭐️ Map new data ---
+                    if result['momentum_12_1'] is not None: momentum_data[ticker] = result['momentum_12_1']
+                    if result['volatility_1y'] is not None: volatility_data[ticker] = result['volatility_1y']
+                    # --- ⭐️ ---
+                    
                     if result['rsi'] is not None: rsi_data[ticker] = result['rsi']
                     if result['last_price'] is not None: last_prices[ticker] = result['last_price']
                     if result['support_resistance'] is not None: support_resistance_levels[ticker] = result['support_resistance']
@@ -235,6 +280,7 @@ def run_full_analysis(CONFIG):
                     news_data[ticker] = result['recent_news']
                     headline_data[ticker] = result['latest_headline']
                     calendar_data[ticker] = result['earnings_date']
+
             except Exception as e:
                 logging.error(f"Error processing {ticker} in main loop: {e}")
 
@@ -247,12 +293,12 @@ def run_full_analysis(CONFIG):
     status_text.info("... (4/7) جارٍ حساب المخاطر/العوائد (R/R)...")
     progress_bar.progress(0.9, text="Calculating Risk/Reward...")
 
+    # (Risk/Reward calculation - Unchanged)
     threshold_percentage = CONFIG['PRICE_THRESHOLD_PERCENT']
     comparison_results = {}
     risk_percentages = {}
     reward_percentages = {}
     risk_reward_ratios = {}
-
     for ticker in last_prices.keys():
         last_price = last_prices.get(ticker)
         levels = support_resistance_levels.get(ticker)
@@ -260,7 +306,6 @@ def run_full_analysis(CONFIG):
         risk_percentages[ticker] = "N/A"
         reward_percentages[ticker] = "N/A"
         risk_reward_ratios[ticker] = "N/A"
-
         if last_price is not None and levels is not None and last_price > 0:
             support = levels.get('Support')
             resistance = levels.get('Resistance')
@@ -275,7 +320,6 @@ def run_full_analysis(CONFIG):
                     risk_reward_ratios[ticker] = reward_pct / risk_pct
                 else:
                     risk_reward_ratios[ticker] = "N/A (Price below Support)"
-
                 support_diff_percentage = ((last_price - support) / support) * 100 if support != 0 else float('inf')
                 if abs(support_diff_percentage) <= threshold_percentage:
                     comparison_results[ticker] = 'Near Support'
@@ -291,7 +335,7 @@ def run_full_analysis(CONFIG):
     status_text.info("... (5/7) جارٍ تجميع النتائج وحساب Z-Scores...")
     progress_bar.progress(0.95, text="Aggregating and Scoring...")
 
-    tickers_to_report = list(momentum_data.keys())
+    tickers_to_report = list(last_prices.keys()) # Use last_prices as the base
     if not tickers_to_report:
         status_text.warning("لا توجد بيانات كافية لإنشاء التقرير.")
         return False
@@ -301,6 +345,7 @@ def run_full_analysis(CONFIG):
         fin_info = financial_data.get(ticker, {})
         support_resistance = support_resistance_levels.get(ticker, {})
 
+        # (Shares to buy calculation - Unchanged)
         shares_to_buy_str = "N/A"
         try:
             last_price_num = pd.to_numeric(last_prices.get(ticker), errors='coerce')
@@ -340,53 +385,92 @@ def run_full_analysis(CONFIG):
             'Next Earnings Date': calendar_data.get(ticker, "N/A"),
             'Latest Headline': headline_data.get(ticker, "N/A"),
             'Dividend Yield (%)': fin_info.get('Dividend Yield'),
-            '1-Year Momentum (%)': momentum_data.get(ticker, pd.NA),
             'Return on Equity (ROE)': fin_info.get('Return on Equity (ROE)'),
+            'Debt/Equity': fin_info.get('Debt/Equity'), # <-- NEWLY ADDED
+            '1-Year Momentum (12-1) (%)': momentum_data.get(ticker, pd.NA), # <-- UPDATED
+            'Volatility (1Y)': volatility_data.get(ticker, pd.NA), # <-- NEW
         }
         results_list.append(result_data)
 
     results_df = pd.DataFrame(results_list)
 
-    FACTOR_WEIGHTS = {'VALUE': 0.40, 'MOMENTUM': 0.30, 'QUALITY': 0.20, 'SIZE': 0.10}
-    def calculate_sector_zscore(series):
-        series = pd.to_numeric(series, errors='coerce')
-        series = series.fillna(series.mean())
-        if series.std() == 0: return 0
-        return (series - series.mean()) / series.std()
+    # --- ⭐️ NEW 6-FACTOR MODEL LOGIC ⭐️ ---
+    
+    # 1. Define new weights
+    FACTOR_WEIGHTS = {
+        'VALUE': 0.25, 
+        'MOMENTUM': 0.15, 
+        'QUALITY': 0.20, 
+        'SIZE': 0.10, 
+        'LOW_VOL': 0.15,  # New Risk Factor
+        'TECHNICAL': 0.15   # New Timing Factor
+    }
 
+    # 2. Calculate Value Z-Scores (Unchanged)
     graham_price = pd.to_numeric(results_df['Fair Price (Graham)'], errors='coerce')
     last_price_pd = pd.to_numeric(results_df['Last Price'], errors='coerce')
     last_price_safe = last_price_pd.replace(0, pd.NA)
     results_df['Value_Discount'] = graham_price / last_price_safe
-    
     stock_pe = pd.to_numeric(results_df['Forward P/E'], errors='coerce')
     sector_pe = pd.to_numeric(results_df['Sector P/E'], errors='coerce')
     results_df['Value_Discount_PE'] = sector_pe / stock_pe
     
-    results_df['Z_Value_Graham'] = results_df.groupby('Sector')['Value_Discount'].transform(calculate_sector_zscore).fillna(0)
-    results_df['Z_Value_Rel_PE'] = results_df.groupby('Sector')['Value_Discount_PE'].transform(calculate_sector_zscore).fillna(0)
-    
+    # Use ROBUST Z-Score
+    results_df['Z_Value_Graham'] = results_df.groupby('Sector')['Value_Discount'].transform(calculate_robust_zscore).fillna(0)
+    results_df['Z_Value_Rel_PE'] = results_df.groupby('Sector')['Value_Discount_PE'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Value'] = (results_df['Z_Value_Graham'] + results_df['Z_Value_Rel_PE']) / 2
     
-    results_df['Z_Momentum'] = results_df.groupby('Sector')['1-Year Momentum (%)'].transform(calculate_sector_zscore).fillna(0)
-    results_df['Z_Quality'] = results_df.groupby('Sector')['Return on Equity (ROE)'].transform(calculate_sector_zscore).fillna(0)
-    results_df['Market Cap'] = pd.to_numeric(results_df['Market Cap'], errors='coerce')
-    results_df['Z_Size'] = results_df.groupby('Sector')['Market Cap'].transform(calculate_sector_zscore).fillna(0) * -1
+    # 3. Calculate Momentum Z-Score (Using new 12-1 data)
+    results_df['Z_Momentum'] = results_df.groupby('Sector')['1-Year Momentum (12-1) (%)'].transform(calculate_robust_zscore).fillna(0)
+    
+    # 4. Calculate Composite Quality Z-Score
+    results_df['Z_Profitability'] = results_df.groupby('Sector')['Return on Equity (ROE)'].transform(calculate_robust_zscore).fillna(0)
+    # Invert Debt/Equity (lower is better)
+    results_df['Z_Leverage'] = results_df.groupby('Sector')['Debt/Equity'].transform(calculate_robust_zscore).fillna(0) * -1 
+    results_df['Z_Payout'] = results_df.groupby('Sector')['Dividend Yield (%)'].transform(calculate_robust_zscore).fillna(0)
+    # Average the sub-factors
+    results_df['Z_Quality'] = (results_df['Z_Profitability'] + results_df['Z_Leverage'] + results_df['Z_Payout']) / 3
 
+    # 5. Calculate Size Z-Score (Unchanged, but now robust)
+    results_df['Market Cap'] = pd.to_numeric(results_df['Market Cap'], errors='coerce')
+    results_df['Z_Size'] = results_df.groupby('Sector')['Market Cap'].transform(calculate_robust_zscore).fillna(0) * -1 # Small caps are better
+
+    # 6. NEW: Calculate Low Volatility Z-Score
+    # Invert Volatility (lower is better)
+    results_df['Z_Low_Volatility'] = results_df.groupby('Sector')['Volatility (1Y)'].transform(calculate_robust_zscore).fillna(0) * -1
+    
+    # 7. NEW: Calculate Technical Z-Score
+    def get_technical_score(row):
+        score = 0
+        if str(row['MACD_Signal']).startswith('Bullish'):
+            score += 1
+        if str(row['Trend (50/200 Day MA)']) == 'Confirmed Uptrend':
+            score += 1
+        if str(row['Price vs. Levels']) == 'Near Support':
+            score += 0.5 # Half point bonus
+        return score
+    results_df['Technical_Score'] = results_df.apply(get_technical_score, axis=1)
+    results_df['Z_Technical'] = results_df.groupby('Sector')['Technical_Score'].transform(calculate_robust_zscore).fillna(0)
+
+    # 8. Calculate Final 6-Factor Quant Score
     results_df['Final Quant Score'] = (
         (results_df['Z_Value'] * FACTOR_WEIGHTS['VALUE']) +
         (results_df['Z_Momentum'] * FACTOR_WEIGHTS['MOMENTUM']) +
         (results_df['Z_Quality'] * FACTOR_WEIGHTS['QUALITY']) +
-        (results_df['Z_Size'] * FACTOR_WEIGHTS['SIZE'])
+        (results_df['Z_Size'] * FACTOR_WEIGHTS['SIZE']) +
+        (results_df['Z_Low_Volatility'] * FACTOR_WEIGHTS['LOW_VOL']) +
+        (results_df['Z_Technical'] * FACTOR_WEIGHTS['TECHNICAL'])
     )
+    # --- ⭐️ END 6-FACTOR MODEL ⭐️ ---
 
+    # (Sorting and final prep)
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
-
     results_df.sort_values(by='Final Quant Score', ascending=False, inplace=True)
     results_df.set_index('Ticker', inplace=True)
 
+    # (Create result sets - Unchanged)
     top_10_market_cap = results_df.sort_values(by='Market Cap', ascending=False).head(10)
     top_20_quant = results_df.head(20)
     top_10_undervalued = results_df[
@@ -400,10 +484,13 @@ def run_full_analysis(CONFIG):
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
+            # Add new columns to format list
             format_cols = ['Last Price', 'Fair Price (Graham)', 'Cut Loss Level (Support)',
                            'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio',
-                           'Risk % (to Support)', 'Dividend Yield (%)', '1-Year Momentum (%)',
-                           'Return on Equity (ROE)', 
+                           'Risk % (to Support)', 'Dividend Yield (%)', 
+                           '1-Year Momentum (12-1) (%)', # <-- UPDATED
+                           'Volatility (1Y)', # <-- NEW
+                           'Return on Equity (ROE)', 'Debt/Equity',
                            'Forward P/E', 'Sector P/E', 'P/B Ratio', 'Sector P/B']
 
             def format_for_excel(df):
@@ -417,12 +504,7 @@ def run_full_analysis(CONFIG):
             format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
             format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
             format_for_excel(top_quant_high_rr).to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
-            
-            # --- ⭐️⭐️⭐️ FIX #1 ⭐️⭐️⭐️ ---
-            # Changed sheet_name from 'Rel/Graham' to 'Rel & Graham'
             format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Rel & Graham)', index=True)
-            # --- ⭐️⭐️⭐️ END FIX #1 ⭐️⭐️⭐️ ---
-            
             format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
             format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
 
@@ -449,17 +531,15 @@ def run_full_analysis(CONFIG):
 
                 df_formatted = format_for_excel(df.reset_index())
                 
-                # --- ⭐️⭐️⭐️ FIX #2 ⭐️⭐️⭐️ ---
-                # Changed cols_map key from 'Rel/Graham' to 'Rel & Graham'
+                # Update PDF columns to reflect new model
                 cols_map = {
-                    'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Relative P/E', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'Rel. P/E', 'R/R', 'Stop Loss', 'Div %']),
-                    'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Relative P/E', 'Valuation (Graham)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Shares to Buy ($50 Risk)'], ['Ticker', 'Score', 'Sector', 'Price', 'Rel. P/E', 'Graham', 'R/R', 'Stop Loss', 'Shares']),
-                    'Top Quant & High R-R (Ratio > 1)': (['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Relative P/E', 'Last Price', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Shares to Buy ($50 Risk)'], ['Ticker', 'Score', 'R/R', 'Rel. P/E', 'Price', 'Stop Loss', 'Fib Target', 'Shares']),
+                    'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Relative P/E', 'Risk/Reward Ratio', 'Volatility (1Y)', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'Rel. P/E', 'R/R', 'Volatility', 'Div %']),
+                    'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Relative P/E', 'Valuation (Graham)', 'Risk/Reward Ratio', 'Volatility (1Y)', '1-Year Momentum (12-1) (%)'], ['Ticker', 'Score', 'Sector', 'Price', 'Rel. P/E', 'Graham', 'R/R', 'Volatility', 'Momentum']),
+                    'Top Quant & High R-R (Ratio > 1)': (['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Relative P/E', 'Last Price', 'Volatility (1Y)', 'Cut Loss Level (Support)'], ['Ticker', 'Score', 'R/R', 'Rel. P/E', 'Price', 'Volatility', 'Stop Loss']),
                     'Top 10 Undervalued (Rel & Graham)': (['Ticker', 'Final Quant Score', 'Relative P/E', 'Valuation (Graham)', 'Last Price', 'Fair Price (Graham)', 'Sector P/E', 'Forward P/E'], ['Ticker', 'Score', 'Rel. P/E', 'Graham', 'Price', 'Graham Price', 'Sector P/E', 'Stock P/E']),
                     'New Bullish Crossovers (MACD)': (['Ticker', 'Final Quant Score', 'MACD_Signal', 'Last Price', 'Trend (50/200 Day MA)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Relative P/E'], ['Ticker', 'Score', 'MACD', 'Price', 'Trend', 'R/R', 'Stop Loss', 'Rel. P/E']),
-                    'Stocks Currently Near Support': (['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Relative P/E'], ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Rel. P/E'])
+                    'Stocks Currently Near Support': (['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Volatility (1Y)'], ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Volatility'])
                 }
-                # --- ⭐️⭐️⭐️ END FIX #2 ⭐️⭐️⭐️ ---
 
                 if title in cols_map:
                     cols, headers = cols_map[title]
@@ -488,7 +568,6 @@ def run_full_analysis(CONFIG):
                     ('ALTERNATINGBACKGROUND', (0, 1), (-1, -1), [colors.Color(0.9, 0.9, 0.9), colors.Color(0.98, 0.98, 0.98)])
                 ])
                 table.setStyle(table_style)
-
                 elements = [Paragraph(title, styles['h2']), Spacer(1, 0.1*inch), table, Spacer(1, 0.25*inch)]
                 return elements
 
@@ -496,12 +575,7 @@ def run_full_analysis(CONFIG):
             elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", top_10_market_cap))
             elements.extend(create_pdf_table("Top 20 by Final Quant Score", top_20_quant))
             elements.extend(create_pdf_table("Top Quant & High R-R (Ratio > 1)", top_quant_high_rr))
-            
-            # --- ⭐️⭐️⭐️ FIX #3 ⭐️⭐️⭐️ ---
-            # Changed PDF title from 'Rel/Graham' to 'Rel & Graham'
             elements.extend(create_pdf_table("Top 10 Undervalued (Rel & Graham)", top_10_undervalued))
-            # --- ⭐️⭐️⭐️ END FIX #3 ⭐️⭐️⭐️ ---
-
             elements.extend(create_pdf_table("New Bullish Crossovers (MACD)", new_crossovers))
             elements.extend(create_pdf_table("Stocks Currently Near Support", near_support))
 
@@ -516,10 +590,10 @@ def run_full_analysis(CONFIG):
     progress_bar.progress(1.0, text="اكتمل التحليل!")
     status_text.success("اكتمل التحليل بنجاح!")
     return True
-# --- نهاية دالة التحليل ---
+# --- ⭐️ END UPDATED FUNCTION ---
 
 
-# --- واجهة مستخدم Streamlit الرئيسية (تم إصلاحها) ---
+# --- واجهة مستخدم Streamlit الرئيسية (Unchanged) ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
     st.title("SPUS Quantitative Analysis Dashboard")
@@ -590,13 +664,10 @@ def main():
 
         tab_titles = list(data_sheets.keys())
         
-        # --- ⭐️⭐️⭐️ FIX #4 ⭐️⭐️⭐️ ---
-        # Handle old/broken tab names and standardize to the new correct name
         if "Top 10 Undervalued (Graham)" in tab_titles:
             tab_titles[tab_titles.index("Top 10 Undervalued (Graham)")] = "Top 10 Undervalued (Rel & Graham)"
         elif "Top 10 Undervalued (Rel/Graham)" in tab_titles:
             tab_titles[tab_titles.index("Top 10 Undervalued (Rel/Graham)")] = "Top 10 Undervalued (Rel & Graham)"
-        # --- ⭐️⭐️⭐️ END FIX #4 ⭐️⭐️⭐️ ---
             
         if "All Results" in tab_titles:
             tab_titles.remove("All Results")
@@ -634,6 +705,7 @@ def main():
 
                 st.divider()
 
+                # Apply the (now upgraded) styling function
                 styled_df = apply_comprehensive_styling(df_to_show)
                 st.dataframe(styled_df, use_container_width=True)
 

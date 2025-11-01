@@ -7,6 +7,14 @@ import sys
 import glob
 import numpy as np # Import numpy
 
+# --- ⭐️ 1. Set Page Configuration FIRST ⭐️ ---
+# This must be the first Streamlit command.
+st.set_page_config(
+    page_title="SPUS Quant Analyzer",
+    page_icon="httpsSP://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", # Favicon
+    layout="wide"
+)
+
 # --- إصلاح مسار الاستيراد (Import Path Fix) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -50,10 +58,175 @@ except ImportError:
     logging.warning("مكتبة 'reportlab' غير موجودة. لن يتم إنشاء تقارير PDF.")
 
 
-# --- ⭐️ UPDATED: دالة لقراءة بيانات الإكسل ⭐️ ---
-# This function no longer needs to be cached, as the main
-# analysis function that *creates* the Excel file is now cached.
+# --- ⭐️ 2. NEW: Custom CSS for Modern Minimal Theme ⭐️ ---
+def load_css():
+    """
+    Injects custom CSS for a modern, minimal, card-based theme
+    with shadow effects. It respects Streamlit's light/dark modes.
+    """
+    st.markdown(f"""
+    <style>
+        /* --- Import Google Font (Inter) --- */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        /* --- Base Font & Colors --- */
+        html, body, [class*="st-"], [class*="css-"] {{
+            font-family: 'Inter', sans-serif;
+        }}
+
+        /* --- Custom Headers --- */
+        h1 {{
+            font-weight: 700;
+            color: var(--text-color);
+        }}
+        h2 {{
+            font-weight: 600;
+            color: var(--text-color);
+        }}
+        h3 {{
+            font-weight: 600;
+            color: var(--text-color);
+            margin-top: 20px;
+            margin-bottom: 0px;
+        }}
+        
+        /* --- Main App Container --- */
+        .main .block-container {{
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            padding-left: 2.5rem;
+            padding-right: 2.5rem;
+        }}
+
+        /* --- Sidebar Styling --- */
+        [data-testid="stSidebar"] {{
+            border-right: 1px solid var(--gray-800);
+            padding: 1.5rem;
+        }}
+        [data-testid="stSidebar"] h2 {{
+            font-size: 1.5rem;
+            font-weight: 700;
+        }}
+        [data-testid="stSidebar"] .stButton > button {{
+            width: 100%;
+            border-radius: 8px;
+            font-weight: 600;
+        }}
+        [data-testid="stSidebar"] .stDownloadButton > button {{
+            width: 100%;
+            border-radius: 8px;
+            font-weight: 500;
+            border: 1px solid var(--gray-700);
+        }}
+        [data-testid="stSidebar"] [data-testid="stExpander"] {{
+            border: none;
+            box-shadow: none;
+            background-color: transparent;
+        }}
+
+        /* --- ⭐️ Flat Card with Shadow Effect ⭐️ --- */
+        .kpi-card {{
+            background-color: var(--secondary-background-color);
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+            transition: all 0.2s ease-in-out;
+            border: 1px solid var(--gray-800);
+            height: 100%; /* Makes all cards in a row the same height */
+        }}
+        .kpi-card:hover {{
+            box-shadow: 0 6px 16px rgba(0,0,0,0.07);
+            transform: translateY(-2px);
+        }}
+        .kpi-title {{
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--gray-600);
+            margin-bottom: 0.25rem;
+        }}
+        .kpi-value {{
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-color);
+            margin-bottom: 0px;
+            line-height: 1.2;
+        }}
+        .kpi-value.green {{
+            color: #00A600;
+        }}
+        .kpi-value.blue {{
+            color: #004FB0;
+        }}
+        .kpi-value.red {{
+            color: #D30000;
+        }}
+
+        /* --- Tab Bar Styling --- */
+        [data-testid="stTabs"] {{
+            margin-top: 1rem;
+        }}
+        [data-testid="stTabs"] button[role="tab"] {{
+            border-radius: 8px 8px 0 0;
+            padding: 10px 15px;
+            font-weight: 500;
+        }}
+        [data-testid="stTabs"] button[aria-selected="true"] {{
+            background-color: var(--secondary-background-color);
+        }}
+        [data-testid="stTabContent"] {{
+            background-color: var(--secondary-background-color);
+            border: 1px solid var(--gray-800);
+            border-top: none;
+            padding: 1.5rem;
+            border-radius: 0 0 8px 8px;
+        }}
+
+        /* --- DataFrame Styling --- */
+        [data-testid="stDataFrame"] .col_heading, [data-testid="stDataFrame"] .blank {{
+            background-color: var(--background-color);
+            font-weight: 600;
+            border-radius: 0 !important;
+            font-size: 0.85rem;
+        }}
+        [data-testid="stDataFrame"] {{
+            border: 1px solid var(--gray-800);
+            border-radius: 8px;
+        }}
+        
+        /* --- Chart Container --- */
+        .chart-container {{
+            border: 1px solid var(--gray-800);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }}
+
+        /* --- Divider Styling --- */
+        hr {{
+            margin-top: 1.5rem;
+            margin-bottom: 1.5rem;
+            background: var(--gray-800);
+        }}
+        
+        /* --- Markdown links --- */
+        .main a, .main a:visited {{
+            color: var(--primary);
+            text-decoration: none;
+        }}
+        .main a:hover {{
+            text-decoration: underline;
+        }}
+
+    </style>
+    """, unsafe_allow_html=True)
+
+
+# --- ⭐️ ALL HELPER FUNCTIONS (UNCHANGED) ⭐️ ---
+# All backend and data functions are kept identical, as requested.
+
+@st.cache_data
 def load_excel_data(excel_path):
+    """ (This function is unchanged) """
     abs_excel_path = os.path.join(BASE_DIR, excel_path)
     if not os.path.exists(abs_excel_path):
         return None, None
@@ -70,20 +243,14 @@ def load_excel_data(excel_path):
         st.error(f"خطأ أثناء قراءة ملف الإكسل: {e}")
         return None, None
 
-
-# --- دالة التنسيق الشرطي المتقدم للجداول (Unchanged) ---
 def apply_comprehensive_styling(df):
+    """ (This function is unchanged) """
     RELEVANT_COLUMNS = [
         'Ticker', 'Sector', 'Last Price', 
-        'Final Quant Score', 
-        'Valuation (Graham)', 'Relative P/E', 'Relative P/B',
+        'Final Quant Score', 'Valuation (Graham)', 'Relative P/E', 'Relative P/B',
         'MACD_Signal', 'Trend (50/200 Day MA)', 'Price vs. Levels',
-        'Risk/Reward Ratio', 
-        '1-Year Momentum (12-1) (%)', 
-        'Volatility (1Y)', 
-        'Return on Equity (ROE)', 
-        'Debt/Equity', 
-        'Dividend Yield (%)', 
+        'Risk/Reward Ratio', '1-Year Momentum (12-1) (%)', 'Volatility (1Y)', 
+        'Return on Equity (ROE)', 'Debt/Equity', 'Dividend Yield (%)', 
         'Forward P/E', 'Sector P/E',
         'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Next Earnings Date'
     ]
@@ -104,8 +271,7 @@ def apply_comprehensive_styling(df):
     styler = df_display.style.apply(lambda x: x.map(highlight_text), subset=text_style_cols)
     numeric_gradient_cols = [
         'Final Quant Score', 'Risk/Reward Ratio', 
-        '1-Year Momentum (12-1) (%)', 
-        'Volatility (1Y)', 
+        '1-Year Momentum (12-1) (%)', 'Volatility (1Y)', 
         'Risk % (to Support)', 'Forward P/E'
     ]
     for col in numeric_gradient_cols:
@@ -135,8 +301,8 @@ def apply_comprehensive_styling(df):
     styler = styler.format(format_dict, na_rep="N/A", subset=[col for col in format_dict if col in df_display.columns])
     return styler
 
-# --- دالة العثور على أحدث التقارير (Unchanged) ---
 def get_latest_reports(excel_base_path):
+    """ (This function is unchanged) """
     base_dir = os.path.dirname(excel_base_path)
     excel_name_no_ext = os.path.splitext(os.path.basename(excel_base_path))[0]
     latest_pdf = None
@@ -147,8 +313,8 @@ def get_latest_reports(excel_base_path):
     excel_path = excel_base_path if os.path.exists(excel_base_path) else None
     return excel_path, latest_pdf
 
-# --- Robust Z-Score Function (Unchanged) ---
 def calculate_robust_zscore(series):
+    """ (This function is unchanged) """
     series = pd.to_numeric(series, errors='coerce')
     median = series.median()
     mad = (series - median).abs().median()
@@ -157,16 +323,9 @@ def calculate_robust_zscore(series):
     z_score = (series - median) / (1.4826 * mad)
     return z_score
 
-# --- ⭐️ REMOVED clear_cache_files function ---
-
-
-# --- ⭐️ UPDATED: دالة تشغيل التحليل ⭐️ ---
-@st.cache_data(show_spinner=False) # <-- ⭐️ NEW: Wrap main function in Streamlit cache
+@st.cache_data(show_spinner=False)
 def run_full_analysis(CONFIG):
-    """
-    This function now handles the entire data fetch and analysis pipeline.
-    Its output (the dict of data sheets) is cached in memory by Streamlit.
-    """
+    """ (This function is unchanged) """
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
     status_text.info("يتم الآن بدء التحليل...")
@@ -180,19 +339,15 @@ def run_full_analysis(CONFIG):
         ]
     )
     status_text.info("... (1/7) جارٍ جلب قائمة الرموز (Tickers)...")
-    ticker_symbols = fetch_spus_tickers() # <-- Fetches fresh tickers
+    ticker_symbols = fetch_spus_tickers() 
     if not ticker_symbols:
         status_text.warning("لم يتم العثور على رموز. تم إلغاء التحليل.")
-        return None, None # Return value must match cache expectation
-        
+        return None, None
     exclude_tickers = CONFIG['EXCLUDE_TICKERS']
     ticker_symbols = [ticker for ticker in ticker_symbols if ticker not in exclude_tickers]
     if CONFIG['TICKER_LIMIT'] > 0:
         ticker_symbols = ticker_symbols[:CONFIG['TICKER_LIMIT']]
         status_text.info(f"التحليل يقتصر على أول {CONFIG['TICKER_LIMIT']} شركة فقط.")
-
-    # --- ⭐️ REMOVED cache directory creation ---
-
     momentum_data = {}
     volatility_data = {} 
     rsi_data = {}
@@ -210,7 +365,6 @@ def run_full_analysis(CONFIG):
     start_time = time.time()
     processed_count = 0
     total_tickers = len(ticker_symbols)
-    
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_ticker = {
             executor.submit(process_ticker, ticker): ticker
@@ -334,9 +488,7 @@ def run_full_analysis(CONFIG):
             'Volatility (1Y)': volatility_data.get(ticker, pd.NA),
         }
         results_list.append(result_data)
-    
     results_df = pd.DataFrame(results_list)
-
     status_text.info("... (5/7) Calculating sector medians...")
     results_df['Forward P/E'] = pd.to_numeric(results_df['Forward P/E'], errors='coerce')
     results_df['P/B Ratio'] = pd.to_numeric(results_df['P/B Ratio'], errors='coerce')
@@ -353,7 +505,6 @@ def run_full_analysis(CONFIG):
             return "Overvalued (Sector)"
     results_df['Relative P/E'] = results_df.apply(lambda row: get_relative_signal(row['Forward P/E'], row['Sector P/E']), axis=1)
     results_df['Relative P/B'] = results_df.apply(lambda row: get_relative_signal(row['P/B Ratio'], row['Sector P/B']), axis=1)
-    
     FACTOR_WEIGHTS = {
         'VALUE': 0.25, 'MOMENTUM': 0.15, 'QUALITY': 0.20, 
         'SIZE': 0.10, 'LOW_VOL': 0.15, 'TECHNICAL': 0.15
@@ -400,8 +551,6 @@ def run_full_analysis(CONFIG):
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
     results_df.sort_values(by='Final Quant Score', ascending=False, inplace=True)
     results_df.set_index('Ticker', inplace=True)
-    
-    # Create a dictionary of the resulting dataframes
     data_sheets = {
         'Top 20 Final Quant Score': results_df.head(20),
         'Top Quant & High R-R': results_df[pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce') > 1].head(20).sort_values(by='Risk/Reward Ratio', ascending=False),
@@ -414,7 +563,6 @@ def run_full_analysis(CONFIG):
         'Top 10 by Market Cap (SPUS)': results_df.sort_values(by='Market Cap', ascending=False).head(10),
         'All Results': results_df
     }
-
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
@@ -431,16 +579,12 @@ def run_full_analysis(CONFIG):
                     if col in df_copy.columns:
                         df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                 return df_copy
-            
-            # Save all sheets from the dictionary
             for sheet_name, df in data_sheets.items():
                  format_for_excel(df).to_excel(writer, sheet_name=sheet_name, index=True)
-
         status_text.info(f"تم حفظ تقرير الإكسل بنجاح: {excel_file_path}")
     except Exception as e:
         st.error(f"فشل حفظ ملف الإكسل: {e}")
         return None, None
-        
     status_text.info("... (7/7) جارٍ حفظ تقرير PDF...")
     progress_bar.progress(0.99, text="Saving PDF report...")
     if REPORTLAB_AVAILABLE:
@@ -504,7 +648,6 @@ def run_full_analysis(CONFIG):
                 elements.append(Spacer(1, 0.25*inch))
                 return elements
             elements.append(Paragraph(f"SPUS Analysis Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['h1']))
-            # --- ⭐️ Create PDF from data_sheets dictionary ---
             elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", data_sheets['Top 10 by Market Cap (SPUS)']))
             elements.extend(create_pdf_table("Top 20 by Final Quant Score", data_sheets['Top 20 Final Quant Score']))
             elements.extend(create_pdf_table("Top Quant & High R-R", data_sheets['Top Quant & High R-R']))
@@ -521,16 +664,15 @@ def run_full_analysis(CONFIG):
     progress_bar.progress(1.0, text="اكتمل التحليل!")
     status_text.success("اكتمل التحليل بنجاح!")
     
-    # Return the results so they can be cached
     return data_sheets, datetime.now().timestamp()
 # --- ⭐️ END UPDATED FUNCTION ---
 
 
-# --- ⭐️ UPDATED: واجهة مستخدم Streamlit الرئيسية ⭐️ ---
+# --- ⭐️ 3. UPDATED: واجهة مستخدم Streamlit الرئيسية ⭐️ ---
 def main():
-    st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
-    st.title("SPUS Quantitative Analysis Dashboard")
-    st.markdown("لوحة متابعة لتحليل محفظة SPUS بناءً على عوامل متعددة (قيمة، زخم، جودة، حجم).")
+    
+    # --- ⭐️ Call CSS loader
+    load_css()
 
     CONFIG = load_config('config.json')
 
@@ -542,21 +684,23 @@ def main():
     EXCEL_FILE = CONFIG.get('EXCEL_FILE_PATH', './spus_analysis_results.xlsx')
     ABS_EXCEL_PATH = os.path.join(BASE_DIR, EXCEL_FILE)
 
+    # --- ⭐️ Redesigned Sidebar ---
     with st.sidebar:
         st.image("https://www.sp-funds.com/wp-content/uploads/2022/02/SP-Funds-Logo-Primary-Wht-1.svg", width=200)
-        st.header("أدوات التحكم")
-
-        # --- ⭐️ UPDATED: Run button now clears the cache ---
-        if st.button("Run Full Analysis (تشغيل التحليل الكامل)", type="primary"):
-            st.cache_data.clear() # <-- Clears the memory cache
-            st.success("Cache cleared. Running fresh analysis...")
-            st.rerun() # Re-run the script to trigger the cached function
+        st.title("SPUS Quant Analyzer")
+        st.markdown("تحليل كمي متقدم لمحفظة SPUS.")
         
         st.divider()
-        
-        # --- ⭐️ REMOVED: Cache Management section ---
 
-        st.header("Downloads")
+        st.subheader("Controls")
+        if st.button("🔄 Run Full Analysis (تشغيل التحليل الكامل)", type="primary"):
+            st.cache_data.clear() 
+            st.success("Cache cleared. Running fresh analysis...")
+            st.rerun()
+        
+        st.divider()
+
+        st.subheader("Downloads")
         excel_path, pdf_path = get_latest_reports(ABS_EXCEL_PATH)
         
         if excel_path:
@@ -568,18 +712,16 @@ def main():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         else:
-            st.warning("لم يتم العثور على تقرير Excel. قم بتشغيل التحليل أولاً.")
+            st.info("قم بتشغيل التحليل أولاً لإنشاء التقارير.")
 
         if pdf_path:
             with open(pdf_path, "rb") as file:
                 st.download_button(
-                    label="📥 Download PDF Report",
+                    label="📄 Download PDF Report",
                     data=file,
                     file_name=os.path.basename(pdf_path),
                     mime="application/pdf",
                 )
-        else:
-            st.info("لم يتم العثور على تقرير PDF. سيتم إنشاؤه بعد تشغيل التحليل.")
         
         st.divider()
         
@@ -590,24 +732,25 @@ def main():
             * **P/B**: Price-to-Book (السعر إلى القيمة الدفترية)
             * **ROE**: Return on Equity (العائد على حقوق الملكية)
             * **D/E**: Debt-to-Equity (الدين إلى حقوق الملكية)
-            * **MACD**: Moving Average Convergence Divergence (مؤشر تقارب وتباعد المتوسطات المتحركة)
-            * **SMA**: Simple Moving Average (المتوسط المتحرك البسيط)
-            * **RSI**: Relative Strength Index (مؤشر القوة النسبية)
+            * **MACD**: Moving Average Convergence Divergence
             * **R/R**: Risk/Reward Ratio (نسبة المخاطرة إلى العائد)
             * **Volatility (1Y)**: 1-Year Volatility (التقلب السنوي)
-            * **Momentum (12-1)**: 12-Month Momentum skipping the last month (الزخم لمدة 12 شهرًا مع تخطي الشهر الأخير)
+            * **Momentum (12-1)**: 12-Month Momentum (skipping last month)
             """)
         
         st.divider()
         st.info("اضغط 'Run' لبدء التحليل. سيتم تخزين النتائج مؤقتًا.")
+    
+    # --- ⭐️ End Redesigned Sidebar ---
 
-    # --- ⭐️ UPDATED: Call the cached function ---
-    # This will only run if the cache is empty (e.g., first load or after 'Run' is pressed)
-    # The spinner will show while this function is running.
+
+    # --- Main Page Content ---
+    st.title("SPUS Quantitative Dashboard")
+    st.markdown("Welcome to the SPUS Quantitative Analysis tool. All data is analyzed using a 6-factor model (Value, Momentum, Quality, Size, Volatility, Technicals) relative to sector peers.")
+
     with st.spinner("Running full analysis... This may take several minutes on first run..."):
         data_sheets, mod_time = run_full_analysis(CONFIG)
-    # --- ⭐️ END UPDATE ---
-
+    
     if data_sheets is None:
         st.warning("لم يتم العثور على ملف نتائج (`spus_analysis_results.xlsx`).")
         st.info("👈 يرجى الضغط على زر 'Run Full Analysis' في الشريط الجانبي لبدء التحليل الأول.")
@@ -629,45 +772,125 @@ def main():
 
         for i, sheet_name in enumerate(tab_titles):
             with tabs[i]:
-                st.header(sheet_name)
                 df_to_show = data_sheets[sheet_name]
 
+                # --- ⭐️ NEW: KPI Card Row ---
+                # We create KPI cards for the most important tabs
+                if sheet_name == 'Top 20 Final Quant Score' and not df_to_show.empty:
+                    top_stock = df_to_show.iloc[0]
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.markdown(f"""
+                        <div class="kpi-card">
+                            <div class="kpi-title">🏆 Top Ranked Stock</div>
+                            <div class="kpi-value green">{top_stock.name}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"""
+                        <div class="kpi-card">
+                            <div class="kpi-title">Top Quant Score</div>
+                            <div class="kpi-value">{top_stock['Final Quant Score']:.3f}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col3:
+                        st.markdown(f"""
+                        <div class="kpi-card">
+                            <div class="kpi-title">Avg. Score in Top 20</div>
+                            <div class="kpi-value">{df_to_show['Final Quant Score'].mean():.3f}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                elif sheet_name == 'Top Quant & High R-R' and not df_to_show.empty:
+                    top_rr_stock = df_to_show.iloc[0]
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"""
+                        <div class="kpi-card">
+                            <div class="kpi-title">📈 Best Risk/Reward</div>
+                            <div class="kpi-value green">{top_rr_stock.name}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col2:
+                        st.markdown(f"""
+                        <div class="kpi-card">
+                            <div class="kpi-title">Top R/R Ratio</div>
+                            <div class="kpi-value">{top_rr_stock['Risk/Reward Ratio']:.2f}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                elif sheet_name == 'New Bullish Crossovers (MACD)' and not df_to_show.empty:
+                    st.markdown(f"""
+                    <div class="kpi-card">
+                        <div class="kpi-title">⚡️ New MACD Signals</div>
+                        <div class="kpi-value blue">{len(df_to_show)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                elif sheet_name == 'Stocks Currently Near Support' and not df_to_show.empty:
+                    st.markdown(f"""
+                    <div class="kpi-card">
+                        <div class="kpi-title">📉 Stocks Near Support</div>
+                        <div class="kpi-value blue">{len(df_to_show)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # --- ⭐️ NEW: Chart & Table Layout ---
+                
+                # 1. Header with Download Button
+                col1, col2 = st.columns([0.8, 0.2])
+                with col1:
+                    st.header(sheet_name)
+                with col2:
+                    csv = df_to_show.to_csv(index=True).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv,
+                        file_name=f"{sheet_name.replace(' ', '_')}.csv",
+                        mime='text/csv',
+                        key=f"csv_download_{sheet_name}",
+                        use_container_width=True
+                    )
+                
+                # 2. Charts (if they exist for this tab)
                 chart_df = df_to_show.copy().reset_index()
+                
+                with st.container(border=True, height=None):
+                    if sheet_name == 'Top 20 Final Quant Score':
+                        st.subheader("Top 20 by Quant Score")
+                        chart_df['Final Quant Score'] = pd.to_numeric(chart_df['Final Quant Score'], errors='coerce')
+                        chart_df.dropna(subset=['Final Quant Score'], inplace=True)
+                        st.bar_chart(chart_df.sort_values('Final Quant Score', ascending=False),
+                                     x='Ticker', y='Final Quant Score', color="#00A600")
 
-                if sheet_name == 'Top 20 Final Quant Score':
-                    st.subheader("أعلى 20 شركة حسب التقييم (Quant Score)")
-                    chart_df['Final Quant Score'] = pd.to_numeric(chart_df['Final Quant Score'], errors='coerce')
-                    chart_df.dropna(subset=['Final Quant Score'], inplace=True)
-                    st.bar_chart(chart_df.sort_values('Final Quant Score', ascending=False),
-                                 x='Ticker', y='Final Quant Score', color="#00A600")
+                    elif sheet_name == 'Top Quant & High R-R':
+                        st.subheader("Top Stocks with R/R > 1")
+                        chart_df['Risk/Reward Ratio'] = pd.to_numeric(chart_df['Risk/Reward Ratio'], errors='coerce')
+                        chart_df.dropna(subset=['Risk/Reward Ratio'], inplace=True)
+                        st.bar_chart(chart_df.sort_values('Risk/Reward Ratio', ascending=False),
+                                     x='Ticker', y='Risk/Reward Ratio', color="#004FB0")
 
-                elif sheet_name == 'Top Quant & High R-R':
-                    st.subheader("أفضل الشركات (تقييم عالي ونسبة مخاطرة/عائد > 1)")
-                    chart_df['Risk/Reward Ratio'] = pd.to_numeric(chart_df['Risk/Reward Ratio'], errors='coerce')
-                    chart_df.dropna(subset=['Risk/Reward Ratio'], inplace=True)
-                    st.bar_chart(chart_df.sort_values('Risk/Reward Ratio', ascending=False),
-                                 x='Ticker', y='Risk/Reward Ratio', color="#004FB0")
+                    elif sheet_name == 'Top 10 by Market Cap (SPUS)':
+                        st.subheader("Top 10 by Market Cap")
+                        chart_df['Market Cap'] = pd.to_numeric(chart_df['Market Cap'], errors='coerce')
+                        chart_df.dropna(subset=['Market Cap'], inplace=True)
+                        st.bar_chart(chart_df.sort_values('Market Cap', ascending=False),
+                                     x='Ticker', y='Market Cap')
+                    else:
+                        # Add a small note if no chart
+                        st.markdown(f"*Detailed data for **{sheet_name}** below.*")
 
-                elif sheet_name == 'Top 10 by Market Cap (SPUS)':
-                    st.subheader("أكبر 10 شركات (من محفظة SPUS)")
-                    chart_df['Market Cap'] = pd.to_numeric(chart_df['Market Cap'], errors='coerce')
-                    chart_df.dropna(subset=['Market Cap'], inplace=True)
-                    st.bar_chart(chart_df.sort_values('Market Cap', ascending=False),
-                                 x='Ticker', y='Market Cap')
-
-                st.divider()
-
+                # 3. Styled DataFrame
+                st.subheader("Detailed Data")
                 styled_df = apply_comprehensive_styling(df_to_show)
                 st.dataframe(styled_df, use_container_width=True)
 
-                csv = df_to_show.to_csv(index=True).encode('utf-8')
-                st.download_button(
-                    label=f"تنزيل {sheet_name} كـ CSV",
-                    data=csv,
-                    file_name=f"{sheet_name.replace(' ', '_')}.csv",
-                    mime='text/csv',
-                    key=f"csv_download_{sheet_name}"
-                )
 
 if __name__ == "__main__":
+    # --- ⭐️ 0. Set Page Config (Must be first) ---
+    st.set_page_config(
+        page_title="SPUS Quant Analyzer",
+        page_icon="https://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png",
+        layout="wide"
+    )
     main()

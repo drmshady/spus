@@ -125,6 +125,7 @@ def load_css():
         }}
 
         /* --- ⭐️ Flat Card with Shadow Effect ⭐️ --- */
+        /* (This class is no longer used in the main layout, but kept for PDF/future use) */
         .kpi-card {{
             background-color: var(--secondary-background-color);
             padding: 1.5rem;
@@ -181,30 +182,39 @@ def load_css():
             border-radius: 0 0 8px 8px;
         }}
 
-        /* --- DataFrame Styling --- */
-        [data-testid="stDataFrame"] .col_heading, [data-testid="stDataFrame"] .blank {{
+        /* --- ⭐️ Ticker List Button Styling --- */
+        [data-testid="stVerticalBlock"] [data-testid="stButton"] button {{
             background-color: var(--background-color);
-            font-weight: 600;
-            border-radius: 0 !important;
-            font-size: 0.85rem;
-        }}
-        [data-testid="stDataFrame"] {{
             border: 1px solid var(--gray-800);
-            border-radius: 8px;
+            color: var(--text-color);
+            font-weight: 500;
         }}
-        
-        /* --- Chart Container --- */
-        .chart-container {{
-            border: 1px solid var(--gray-800);
-            border-radius: 8px;
-            padding: 1rem;
-            margin-top: 1rem;
+        [data-testid="stVerticalBlock"] [data-testid="stButton"] button:hover {{
+            border-color: var(--primary);
+            color: var(--primary);
+        }}
+        [data-testid="stVerticalBlock"] [data-testid="stButton"] button:focus {{
+            border-color: var(--primary);
+            color: var(--primary);
+            box-shadow: 0 0 0 2px var(--primary-light);
         }}
 
+        /* --- Metric & Detail Styling --- */
+        [data-testid="stMetric"] {{
+            background-color: var(--background-color);
+            border: 1px solid var(--gray-800);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+        }}
+        [data-testid="stMetric"] label {{
+            font-weight: 500;
+            color: var(--gray-600);
+        }}
+        
         /* --- Divider Styling --- */
         hr {{
-            margin-top: 1.5rem;
-            margin-bottom: 1.5rem;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
             background: var(--gray-800);
         }}
         
@@ -244,7 +254,7 @@ def load_excel_data(excel_path):
         return None, None
 
 def apply_comprehensive_styling(df):
-    """ (This function is unchanged) """
+    """ (This function is no longer used, but kept just in case) """
     RELEVANT_COLUMNS = [
         'Ticker', 'Sector', 'Last Price', 
         'Final Quant Score', 'Valuation (Graham)', 'Relative P/E', 'Relative P/B',
@@ -277,18 +287,7 @@ def apply_comprehensive_styling(df):
     for col in numeric_gradient_cols:
         if col in df_display.columns:
             df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
-    if 'Final Quant Score' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn', subset=['Final Quant Score'], vmin=-2, vmax=2)
-    if 'Risk/Reward Ratio' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn', subset=['Risk/Reward Ratio'], vmin=0, vmax=5)
-    if '1-Year Momentum (12-1) (%)' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn', subset=['1-Year Momentum (12-1) (%)'], vmin=-20, vmax=50)
-    if 'Risk % (to Support)' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Risk % (to Support)'], vmin=0, vmax=15)
-    if 'Forward P/E' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Forward P/E'], vmin=0, vmax=40)
-    if 'Volatility (1Y)' in df_display.columns:
-        styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Volatility (1Y)'], vmin=0.1, vmax=0.6)
+    # ... (gradient code removed for brevity, as it's not used) ...
     format_dict = {
         'Sector P/E': '{:.2f}', 'Sector P/B': '{:.2f}', 'Forward P/E': '{:.2f}',
         'Final Quant Score': '{:.3f}',
@@ -671,6 +670,11 @@ def run_full_analysis(CONFIG):
 # --- ⭐️ 3. UPDATED: واجهة مستخدم Streamlit الرئيسية ⭐️ ---
 def main():
     
+    # --- ⭐️ NEW: Initialize Session State ---
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = None
+    # --- END NEW ---
+
     # --- ⭐️ Call CSS loader
     load_css()
 
@@ -696,6 +700,8 @@ def main():
         if st.button("🔄 Run Full Analysis (تشغيل التحليل الكامل)", type="primary"):
             st.cache_data.clear() 
             st.success("Cache cleared. Running fresh analysis...")
+            # Reset selected ticker on full run
+            st.session_state.selected_ticker = None
             st.rerun()
         
         st.divider()
@@ -768,122 +774,122 @@ def main():
             tab_titles.remove("All Results")
             tab_titles.append("All Results")
 
+        # --- ⭐️ NEW: Callback Function ---
+        def set_ticker(ticker_symbol):
+            st.session_state.selected_ticker = ticker_symbol
+        # --- END NEW ---
+
         tabs = st.tabs(tab_titles)
 
         for i, sheet_name in enumerate(tab_titles):
             with tabs[i]:
                 df_to_show = data_sheets[sheet_name]
 
-                # --- ⭐️ NEW: KPI Card Row ---
-                # We create KPI cards for the most important tabs
-                if sheet_name == 'Top 20 Final Quant Score' and not df_to_show.empty:
-                    top_stock = df_to_show.iloc[0]
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-title">🏆 Top Ranked Stock</div>
-                            <div class="kpi-value green">{top_stock.name}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col2:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-title">Top Quant Score</div>
-                            <div class="kpi-value">{top_stock['Final Quant Score']:.3f}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col3:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-title">Avg. Score in Top 20</div>
-                            <div class="kpi-value">{df_to_show['Final Quant Score'].mean():.3f}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                # --- ⭐️⭐️⭐️ NEW: Two-Column Master-Detail Layout ⭐️⭐️⭐️ ---
+                col1, col2 = st.columns([1, 2]) # 1/3 width for list, 2/3 for details
 
-                elif sheet_name == 'Top Quant & High R-R' and not df_to_show.empty:
-                    top_rr_stock = df_to_show.iloc[0]
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-title">📈 Best Risk/Reward</div>
-                            <div class="kpi-value green">{top_rr_stock.name}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col2:
-                        st.markdown(f"""
-                        <div class="kpi-card">
-                            <div class="kpi-title">Top R/R Ratio</div>
-                            <div class="kpi-value">{top_rr_stock['Risk/Reward Ratio']:.2f}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                
-                elif sheet_name == 'New Bullish Crossovers (MACD)' and not df_to_show.empty:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-title">⚡️ New MACD Signals</div>
-                        <div class="kpi-value blue">{len(df_to_show)}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                elif sheet_name == 'Stocks Currently Near Support' and not df_to_show.empty:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-title">📉 Stocks Near Support</div>
-                        <div class="kpi-value blue">{len(df_to_show)}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # --- ⭐️ NEW: Chart & Table Layout ---
-                
-                # 1. Header with Download Button
-                col1, col2 = st.columns([0.8, 0.2])
+                # --- Column 1: Ticker List ---
                 with col1:
-                    st.header(sheet_name)
-                with col2:
+                    st.subheader(f"Ticker List ({len(df_to_show)})")
+                    
+                    # --- Create a scrollable container for the list ---
+                    with st.container(height=600): # Make list scrollable
+                        for ticker in df_to_show.index:
+                            # Use a "secondary" type for a minimal look
+                            st.button(
+                                ticker, 
+                                key=f"{sheet_name}_{ticker}", 
+                                on_click=set_ticker, 
+                                args=(ticker,), 
+                                use_container_width=True
+                            )
+                    
+                    st.divider()
                     csv = df_to_show.to_csv(index=True).encode('utf-8')
                     st.download_button(
-                        label="📥 Download CSV",
+                        label=f"📥 Download {sheet_name} (CSV)",
                         data=csv,
                         file_name=f"{sheet_name.replace(' ', '_')}.csv",
                         mime='text/csv',
                         key=f"csv_download_{sheet_name}",
                         use_container_width=True
                     )
-                
-                # 2. Charts (if they exist for this tab)
-                chart_df = df_to_show.copy().reset_index()
-                
-                with st.container(border=True):
-                    if sheet_name == 'Top 20 Final Quant Score':
-                        st.subheader("Top 20 by Quant Score")
-                        chart_df['Final Quant Score'] = pd.to_numeric(chart_df['Final Quant Score'], errors='coerce')
-                        chart_df.dropna(subset=['Final Quant Score'], inplace=True)
-                        st.bar_chart(chart_df.sort_values('Final Quant Score', ascending=False),
-                                     x='Ticker', y='Final Quant Score', color="#00A600")
 
-                    elif sheet_name == 'Top Quant & High R-R':
-                        st.subheader("Top Stocks with R/R > 1")
-                        chart_df['Risk/Reward Ratio'] = pd.to_numeric(chart_df['Risk/Reward Ratio'], errors='coerce')
-                        chart_df.dropna(subset=['Risk/Reward Ratio'], inplace=True)
-                        st.bar_chart(chart_df.sort_values('Risk/Reward Ratio', ascending=False),
-                                     x='Ticker', y='Risk/Reward Ratio', color="#004FB0")
-
-                    elif sheet_name == 'Top 10 by Market Cap (SPUS)':
-                        st.subheader("Top 10 by Market Cap")
-                        chart_df['Market Cap'] = pd.to_numeric(chart_df['Market Cap'], errors='coerce')
-                        chart_df.dropna(subset=['Market Cap'], inplace=True)
-                        st.bar_chart(chart_df.sort_values('Market Cap', ascending=False),
-                                     x='Ticker', y='Market Cap')
+                # --- Column 2: Ticker Details ---
+                with col2:
+                    selected_ticker = st.session_state.selected_ticker
+                    
+                    # Show a message if no ticker is selected
+                    if selected_ticker is None:
+                        st.info("Click a ticker on the left to see its details.")
+                    
+                    # If a ticker is selected, show its data
                     else:
-                        # Add a small note if no chart
-                        st.markdown(f"*Detailed data for **{sheet_name}** below.*")
+                        # Fetch the *full* data row from "All Results"
+                        all_data = data_sheets['All Results']
+                        
+                        # Check if the selected ticker is in the main list
+                        if selected_ticker in all_data.index:
+                            ticker_data = all_data.loc[selected_ticker]
+                            
+                            # --- ⭐️ Display Ticker Details ⭐️ ---
+                            
+                            # 1. Header
+                            st.header(f"Details for: {selected_ticker}")
+                            st.markdown(f"**Sector:** {ticker_data['Sector']}")
+                            st.divider()
+                            
+                            # 2. Key Metrics (Quant Score & Price)
+                            st.subheader("Key Metrics")
+                            kpi_cols = st.columns(3)
+                            kpi_cols[0].metric("Final Quant Score", f"{ticker_data['Final Quant Score']:.3f}")
+                            kpi_cols[1].metric("Last Price", f"${ticker_data['Last Price']:.2f}")
+                            kpi_cols[2].metric("Trend (50/200 MA)", f"{ticker_data['Trend (50/200 Day MA)']}")
 
-                # 3. Styled DataFrame
-                st.subheader("Detailed Data")
-                styled_df = apply_comprehensive_styling(df_to_show)
-                st.dataframe(styled_df, use_container_width=True)
+                            # 3. Trading Levels (S/R, R/R)
+                            st.subheader("Trading Levels")
+                            lvl_cols = st.columns(3)
+                            # Handle potential NaN values before formatting
+                            support_val = f"${ticker_data['Cut Loss Level (Support)']:.2f}" if pd.notna(ticker_data['Cut Loss Level (Support)']) else "N/A"
+                            target_val = f"${ticker_data['Fib 161.8% Target']:.2f}" if pd.notna(ticker_data['Fib 161.8% Target']) else "N/A"
+                            rr_val = f"{ticker_data['Risk/Reward Ratio']:.2f}" if pd.notna(ticker_data['Risk/Reward Ratio']) else "N/A"
+                            
+                            lvl_cols[0].metric("Support (Stop Loss)", support_val)
+                            lvl_cols[1].metric("Take Profit (Fib 161.8%)", target_val)
+                            lvl_cols[2].metric("Risk/Reward Ratio", rr_val)
+
+                            # 4. Fundamental Analysis (in an expander)
+                            with st.expander("Fundamental Analysis", expanded=True):
+                                fund_cols = st.columns(3)
+                                fund_cols[0].metric("Graham Valuation", ticker_data['Valuation (Graham)'])
+                                fund_cols[1].metric("Relative P/E", ticker_data['Relative P/E'])
+                                fund_cols[2].metric("Relative P/B", ticker_data['Relative P/B'])
+                                
+                                st.divider()
+                                
+                                # Format values for display
+                                roe_val = f"{ticker_data['Return on Equity (ROE)']:.2f}%" if pd.notna(ticker_data['Return on Equity (ROE)']) else "N/A"
+                                de_val = f"{ticker_data['Debt/Equity']:.2f}" if pd.notna(ticker_data['Debt/Equity']) else "N/A"
+                                div_val = f"{ticker_data['Dividend Yield (%)']:.2f}%" if pd.notna(ticker_data['Dividend Yield (%)']) else "N/A"
+
+                                fund_cols_2 = st.columns(3)
+                                fund_cols_2[0].metric("Return on Equity (ROE)", roe_val)
+                                fund_cols_2[1].metric("Debt/Equity (D/E)", de_val)
+                                fund_cols_2[2].metric("Dividend Yield", div_val)
+
+                            # 5. Recent News (in an expander)
+                            with st.expander("Signals & News"):
+                                st.metric("MACD Signal", ticker_data['MACD_Signal'])
+                                st.info(f"**Latest Headline:** {ticker_data['Latest Headline']}")
+                                st.metric("Recent News (48h)?", ticker_data['Recent News (48h)'])
+                                st.metric("Next Earnings Date", str(ticker_data['Next Earnings Date']))
+                                
+                        else:
+                            # This handles if a ticker from a previous run is selected
+                            st.warning(f"Ticker '{selected_ticker}' not found in the latest data.")
+                            st.session_state.selected_ticker = None # Reset
+                
+                # --- ⭐️⭐️⭐️ END NEW LAYOUT ⭐️⭐️⭐️ ---
 
 
 if __name__ == "__main__":

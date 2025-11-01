@@ -124,44 +124,6 @@ def load_css():
             background-color: transparent;
         }}
 
-        /* --- ⭐️ Flat Card with Shadow Effect ⭐️ --- */
-        /* (This class is no longer used in the main layout, but kept for PDF/future use) */
-        .kpi-card {{
-            background-color: var(--secondary-background-color);
-            padding: 1.5rem;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-            transition: all 0.2s ease-in-out;
-            border: 1px solid var(--gray-800);
-            height: 100%; /* Makes all cards in a row the same height */
-        }}
-        .kpi-card:hover {{
-            box-shadow: 0 6px 16px rgba(0,0,0,0.07);
-            transform: translateY(-2px);
-        }}
-        .kpi-title {{
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: var(--gray-600);
-            margin-bottom: 0.25rem;
-        }}
-        .kpi-value {{
-            font-size: 2rem;
-            font-weight: 700;
-            color: var(--text-color);
-            margin-bottom: 0px;
-            line-height: 1.2;
-        }}
-        .kpi-value.green {{
-            color: #00A600;
-        }}
-        .kpi-value.blue {{
-            color: #004FB0;
-        }}
-        .kpi-value.red {{
-            color: #D30000;
-        }}
-
         /* --- Tab Bar Styling --- */
         [data-testid="stTabs"] {{
             margin-top: 1rem;
@@ -183,8 +145,8 @@ def load_css():
         }}
 
         /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
-        /* Target buttons inside the first column of the main content area */
-        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button {{
+        /* Target buttons ONLY inside our custom ticker list container */
+        .ticker-list-container [data-testid="stButton"] button {{
             border: 1px solid var(--gray-800);
             font-weight: 500;
             text-align: left; /* Align text left */
@@ -195,28 +157,28 @@ def load_css():
         }}
 
         /* Secondary button (non-selected) */
-        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="secondary"] {{
+        .ticker-list-container [data-testid="stButton"] button[kind="secondary"] {{
             background-color: var(--secondary-background-color);
             color: var(--text-color);
         }}
-        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="secondary"]:hover {{
+        .ticker-list-container [data-testid="stButton"] button[kind="secondary"]:hover {{
             border-color: var(--primary);
             color: var(--primary);
             background-color: var(--secondary-background-color);
         }}
-        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="secondary"]:focus {{
+        .ticker-list-container [data-testid="stButton"] button[kind="secondary"]:focus {{
             box-shadow: 0 0 0 2px var(--primary-light);
             border-color: var(--primary);
         }}
 
         /* Primary button (SELECTED) */
-        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="primary"] {{
+        .ticker-list-container [data-testid="stButton"] button[kind="primary"] {{
             border-color: var(--primary);
             background-color: var(--primary);
             color: white; /* White text on primary color */
             font-weight: 600;
         }}
-        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="primary"]:hover {{
+        .ticker-list-container [data-testid="stButton"] button[kind="primary"]:hover {{
             background-color: var(--primary-dark); /* A slightly darker shade on hover */
             border-color: var(--primary-dark);
         }}
@@ -233,6 +195,20 @@ def load_css():
             font-weight: 500;
             color: var(--gray-600);
         }}
+        
+        /* --- ⭐️ FIX for Metric & Expander Arrows ⭐️ --- */
+        [data-testid="stMetric"] > div:nth-child(1) {{
+             /* This targets the container for Label + Delta */
+             display: flex;
+             justify-content: space-between;
+             align-items: center;
+        }}
+        
+        [data-testid="stExpander"] summary {{
+            display: flex;
+            align-items: center;
+        }}
+        /* --- ⭐️ END FIX --- */
         
         /* --- Divider Styling --- */
         hr {{
@@ -819,6 +795,8 @@ def main():
                     with st.container(height=600): # Make list scrollable
                         
                         # --- ⭐️⭐️⭐️ MODIFICATION START ⭐️⭐️⭐️ ---
+                        # We wrap the list in a div to scope the CSS
+                        st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True)
                         for ticker in df_to_show.index:
                             
                             # Get score for the label
@@ -837,6 +815,7 @@ def main():
                                 use_container_width=True,
                                 type=button_type
                             )
+                        st.markdown('</div>', unsafe_allow_html=True)
                         # --- ⭐️⭐️⭐️ MODIFICATION END ⭐️⭐️⭐️ ---
                     
                     st.divider()

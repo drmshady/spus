@@ -147,11 +147,9 @@ def load_css():
 
         /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
         
-        /* ⭐️ NEW: Container for scrollable list */
+        /* ⭐️ REMOVED height and overflow from this div */
         .ticker-list-container {{
-            height: 600px; /* Set height */
-            overflow-y: auto; /* Make scrollable */
-            padding-right: 10px; /* Space for scrollbar */
+            padding-right: 5px; /* Space for scrollbar */
         }}
 
         /* Target buttons ONLY inside our custom ticker list container */
@@ -206,8 +204,8 @@ def load_css():
         }}
         
         /* --- ⭐️ FIX for Metric & Expander Arrows ⭐️ --- */
-        [data-testid="stMetric"] > div:nth-child(1) {{
-             /* This targets the container for Label + Delta */
+        /* This targets the container for Label + Delta */
+        [data-testid="stMetric"] > div[data-testid="stVerticalBlock"] > div:nth-child(1) {{
              display: flex;
              justify-content: space-between;
              align-items: center;
@@ -219,12 +217,21 @@ def load_css():
             display: flex;
             align-items: center;
             justify-content: flex-end;
+            flex-wrap: nowrap;
         }}
 
+        /* This targets the expander header */
         [data-testid="stExpander"] summary {{
             display: flex;
             align-items: center;
             flex-wrap: nowrap; /* Prevent wrapping */
+        }}
+        
+        /* This targets the expander arrow in the sidebar */
+        [data-testid="stSidebar"] [data-testid="stExpander"] summary {{
+            display: flex;
+            align-items: center;
+            flex-wrap: nowrap;
         }}
         /* --- ⭐️ END FIX --- */
         
@@ -814,27 +821,28 @@ def main():
                 with col1:
                     st.subheader(f"Ticker List ({len(df_to_show)})")
                     
-                    # --- ⭐️ MODIFICATION: Remove st.container, use div directly ---
-                    st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True)
-                    for ticker in df_to_show.index:
-                        
-                        # Get score for the label
-                        score = df_to_show.loc[ticker, 'Final Quant Score']
-                        label = f"{ticker} (Score: {score:.3f})"
-                        
-                        # Set button type to 'primary' if selected
-                        is_selected = (st.session_state.selected_ticker == ticker)
-                        button_type = "primary" if is_selected else "secondary"
-                        
-                        st.button(
-                            label, 
-                            key=f"{sheet_name}_{ticker}", 
-                            on_click=set_ticker, 
-                            args=(ticker,), 
-                            use_container_width=True,
-                            type=button_type
-                        )
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    # --- ⭐️ MODIFICATION: Use st.container for scroll, div for style ---
+                    with st.container(height=600): # Use Streamlit's height
+                        st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True) # Use div for styling
+                        for ticker in df_to_show.index:
+                            
+                            # Get score for the label
+                            score = df_to_show.loc[ticker, 'Final Quant Score']
+                            label = f"{ticker} (Score: {score:.3f})"
+                            
+                            # Set button type to 'primary' if selected
+                            is_selected = (st.session_state.selected_ticker == ticker)
+                            button_type = "primary" if is_selected else "secondary"
+                            
+                            st.button(
+                                label, 
+                                key=f"{sheet_name}_{ticker}", 
+                                on_click=set_ticker, 
+                                args=(ticker,), 
+                                use_container_width=True,
+                                type=button_type
+                            )
+                        st.markdown('</div>', unsafe_allow_html=True)
                     # --- ⭐️ END MODIFICATION ---
                     
                     st.divider()
@@ -959,4 +967,6 @@ if __name__ == "__main__":
         layout="wide"
     )
     main()
+
+"
 

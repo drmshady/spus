@@ -71,55 +71,44 @@ def load_excel_data(excel_path):
 
 # --- دالة التنسيق الشرطي المتقدم للجداول (Unchanged) ---
 def apply_comprehensive_styling(df):
-    """
-    Applies comprehensive styling, now including Volatility and new Momentum.
-    """
     RELEVANT_COLUMNS = [
         'Ticker', 'Sector', 'Last Price', 
-        'Final Quant Score', # <-- Moved to front
+        'Final Quant Score', 
         'Valuation (Graham)', 'Relative P/E', 'Relative P/B',
         'MACD_Signal', 'Trend (50/200 Day MA)', 'Price vs. Levels',
         'Risk/Reward Ratio', 
-        '1-Year Momentum (12-1) (%)', # <-- UPDATED
-        'Volatility (1Y)', # <-- NEW
-        'Return on Equity (ROE)', # For reference
-        'Debt/Equity', # For reference
-        'Dividend Yield (%)', # For reference
+        '1-Year Momentum (12-1) (%)', 
+        'Volatility (1Y)', 
+        'Return on Equity (ROE)', 
+        'Debt/Equity', 
+        'Dividend Yield (%)', 
         'Forward P/E', 'Sector P/E',
         'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Next Earnings Date'
     ]
-
     cols_to_show = [col for col in RELEVANT_COLUMNS if col in df.columns]
     df_display = df[cols_to_show].copy()
-
     text_style_cols = [col for col in 
                        ['Valuation (Graham)', 'MACD_Signal', 'Price vs. Levels', 'Relative P/E', 'Relative P/B'] 
                        if col in cols_to_show]
-
     def highlight_text(val):
         val_str = str(val).lower()
-        if 'undervalued' in val_str or 'bullish' in val_str: # More general 'bullish'
-            return 'color: #00A600' # أخضر
+        if 'undervalued' in val_str or 'bullish' in val_str:
+            return 'color: #00A600'
         elif 'overvalued' in val_str or 'bearish' in val_str:
-            return 'color: #D30000' # أحمر
+            return 'color: #D30000'
         elif 'near support' in val_str:
-            return 'color: #004FB0' # أزرق
+            return 'color: #004FB0'
         return ''
-
     styler = df_display.style.apply(lambda x: x.map(highlight_text), subset=text_style_cols)
-
     numeric_gradient_cols = [
         'Final Quant Score', 'Risk/Reward Ratio', 
         '1-Year Momentum (12-1) (%)', 
-        'Volatility (1Y)', # <-- NEW
+        'Volatility (1Y)', 
         'Risk % (to Support)', 'Forward P/E'
     ]
-    
     for col in numeric_gradient_cols:
         if col in df_display.columns:
             df_display[col] = pd.to_numeric(df_display[col], errors='coerce')
-
-    # Apply gradients
     if 'Final Quant Score' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn', subset=['Final Quant Score'], vmin=-2, vmax=2)
     if 'Risk/Reward Ratio' in df_display.columns:
@@ -132,7 +121,6 @@ def apply_comprehensive_styling(df):
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Forward P/E'], vmin=0, vmax=40)
     if 'Volatility (1Y)' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Volatility (1Y)'], vmin=0.1, vmax=0.6)
-
     format_dict = {
         'Sector P/E': '{:.2f}', 'Sector P/B': '{:.2f}', 'Forward P/E': '{:.2f}',
         'Final Quant Score': '{:.3f}',
@@ -143,7 +131,6 @@ def apply_comprehensive_styling(df):
         'Dividend Yield (%)': '{:.2f}%',
     }
     styler = styler.format(format_dict, na_rep="N/A", subset=[col for col in format_dict if col in df_display.columns])
-
     return styler
 
 # --- دالة العثور على أحدث التقارير (Unchanged) ---
@@ -168,14 +155,12 @@ def calculate_robust_zscore(series):
     z_score = (series - median) / (1.4826 * mad)
     return z_score
 
-# --- ⭐️ UPDATED: دالة تشغيل التحليل ⭐️ ---
+# --- دالة تشغيل التحليل (Unchanged) ---
 def run_full_analysis(CONFIG):
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
     status_text.info("يتم الآن بدء التحليل...")
-
     MAX_RISK_USD = 50
-
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
@@ -184,26 +169,20 @@ def run_full_analysis(CONFIG):
             logging.StreamHandler()
         ]
     )
-
     status_text.info("... (1/7) جارٍ جلب قائمة الرموز (Tickers)...")
     ticker_symbols = fetch_spus_tickers() 
-
     if not ticker_symbols:
         status_text.warning("لم يتم العثور على رموز. تم إلغاء التحليل.")
         return False
-
     exclude_tickers = CONFIG['EXCLUDE_TICKERS']
     ticker_symbols = [ticker for ticker in ticker_symbols if ticker not in exclude_tickers]
-
     if CONFIG['TICKER_LIMIT'] > 0:
         ticker_symbols = ticker_symbols[:CONFIG['TICKER_LIMIT']]
         status_text.info(f"التحليل يقتصر على أول {CONFIG['TICKER_LIMIT']} شركة فقط.")
-
     historical_data_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
     if not os.path.exists(historical_data_dir): os.makedirs(historical_data_dir)
     info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if not os.path.exists(info_cache_dir): os.makedirs(info_cache_dir)
-
     if CONFIG.get('PREFETCH_SECTOR_DATA', True):
         status_text.info("... (Pre-fetch) جارٍ جلب بيانات القطاعات (Sectors)...")
         try:
@@ -211,8 +190,6 @@ def run_full_analysis(CONFIG):
             status_text.info("... (Pre-fetch) اكتمل جلب بيانات القطاعات.")
         except Exception as e:
             status_text.warning(f"فشل جلب بيانات القطاعات مسبقاً: {e}")
-
-    # (Dictionaries for data collection)
     momentum_data = {}
     volatility_data = {} 
     rsi_data = {}
@@ -225,19 +202,16 @@ def run_full_analysis(CONFIG):
     news_data = {}
     headline_data = {}
     calendar_data = {}
-
     MAX_WORKERS = CONFIG['MAX_CONCURRENT_WORKERS']
     status_text.info(f"... (2/7) جارٍ جلب البيانات (Concurrent) باستخدام {MAX_WORKERS} عامل...")
     start_time = time.time()
     processed_count = 0
     total_tickers = len(ticker_symbols)
-
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_ticker = {
             executor.submit(process_ticker, ticker): ticker
             for ticker in ticker_symbols
         }
-
         for i, future in enumerate(as_completed(future_to_ticker)):
             ticker = future_to_ticker[future]
             try:
@@ -260,20 +234,15 @@ def run_full_analysis(CONFIG):
                     news_data[ticker] = result['recent_news']
                     headline_data[ticker] = result['latest_headline']
                     calendar_data[ticker] = result['earnings_date']
-
             except Exception as e:
                 logging.error(f"Error processing {ticker} in main loop: {e}")
-
             processed_count = i + 1
             progress_percentage = processed_count / total_tickers
             progress_bar.progress(progress_percentage, text=f"Processing: {ticker} ({processed_count}/{total_tickers})")
-
     end_time = time.time()
     status_text.info(f"... (3/7) انتهى جلب البيانات. الوقت المستغرق: {end_time - start_time:.2f} ثانية.")
     status_text.info("... (4/7) جارٍ حساب المخاطر/العوائد (R/R)...")
     progress_bar.progress(0.9, text="Calculating Risk/Reward...")
-
-    # (Risk/Reward calculation - Unchanged)
     threshold_percentage = CONFIG['PRICE_THRESHOLD_PERCENT']
     comparison_results = {}
     risk_percentages = {}
@@ -311,21 +280,16 @@ def run_full_analysis(CONFIG):
                     comparison_results[ticker] = 'Below Support'
                 else:
                     comparison_results[ticker] = 'Between Support and Resistance'
-
     status_text.info("... (5/7) جارٍ تجميع النتائج وحساب Z-Scores...")
     progress_bar.progress(0.95, text="Aggregating and Scoring...")
-
     tickers_to_report = list(last_prices.keys()) 
     if not tickers_to_report:
         status_text.warning("لا توجد بيانات كافية لإنشاء التقرير.")
         return False
-
     results_list = []
     for ticker in tickers_to_report:
         fin_info = financial_data.get(ticker, {})
         support_resistance = support_resistance_levels.get(ticker, {})
-
-        # (Shares to buy calculation - Unchanged)
         shares_to_buy_str = "N/A"
         try:
             last_price_num = pd.to_numeric(last_prices.get(ticker), errors='coerce')
@@ -339,7 +303,6 @@ def run_full_analysis(CONFIG):
                     shares_to_buy_str = "N/A (Price below Support)"
         except Exception:
             pass
-
         result_data = {
             'Ticker': ticker,
             'Last Price': last_prices.get(ticker, pd.NA),
@@ -371,10 +334,7 @@ def run_full_analysis(CONFIG):
             'Volatility (1Y)': volatility_data.get(ticker, pd.NA),
         }
         results_list.append(result_data)
-
     results_df = pd.DataFrame(results_list)
-
-    # --- 6-FACTOR MODEL LOGIC (Unchanged) ---
     FACTOR_WEIGHTS = {
         'VALUE': 0.25, 
         'MOMENTUM': 0.15, 
@@ -383,7 +343,6 @@ def run_full_analysis(CONFIG):
         'LOW_VOL': 0.15,
         'TECHNICAL': 0.15
     }
-
     graham_price = pd.to_numeric(results_df['Fair Price (Graham)'], errors='coerce')
     last_price_pd = pd.to_numeric(results_df['Last Price'], errors='coerce')
     last_price_safe = last_price_pd.replace(0, pd.NA)
@@ -391,23 +350,17 @@ def run_full_analysis(CONFIG):
     stock_pe = pd.to_numeric(results_df['Forward P/E'], errors='coerce')
     sector_pe = pd.to_numeric(results_df['Sector P/E'], errors='coerce')
     results_df['Value_Discount_PE'] = sector_pe / stock_pe
-    
     results_df['Z_Value_Graham'] = results_df.groupby('Sector')['Value_Discount'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Value_Rel_PE'] = results_df.groupby('Sector')['Value_Discount_PE'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Value'] = (results_df['Z_Value_Graham'] + results_df['Z_Value_Rel_PE']) / 2
-    
     results_df['Z_Momentum'] = results_df.groupby('Sector')['1-Year Momentum (12-1) (%)'].transform(calculate_robust_zscore).fillna(0)
-    
     results_df['Z_Profitability'] = results_df.groupby('Sector')['Return on Equity (ROE)'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Leverage'] = results_df.groupby('Sector')['Debt/Equity'].transform(calculate_robust_zscore).fillna(0) * -1 
     results_df['Z_Payout'] = results_df.groupby('Sector')['Dividend Yield (%)'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Quality'] = (results_df['Z_Profitability'] + results_df['Z_Leverage'] + results_df['Z_Payout']) / 3
-
     results_df['Market Cap'] = pd.to_numeric(results_df['Market Cap'], errors='coerce')
     results_df['Z_Size'] = results_df.groupby('Sector')['Market Cap'].transform(calculate_robust_zscore).fillna(0) * -1 
-
     results_df['Z_Low_Volatility'] = results_df.groupby('Sector')['Volatility (1Y)'].transform(calculate_robust_zscore).fillna(0) * -1
-    
     def get_technical_score(row):
         score = 0
         if str(row['MACD_Signal']).startswith('Bullish'):
@@ -419,7 +372,6 @@ def run_full_analysis(CONFIG):
         return score
     results_df['Technical_Score'] = results_df.apply(get_technical_score, axis=1)
     results_df['Z_Technical'] = results_df.groupby('Sector')['Technical_Score'].transform(calculate_robust_zscore).fillna(0)
-
     results_df['Final Quant Score'] = (
         (results_df['Z_Value'] * FACTOR_WEIGHTS['VALUE']) +
         (results_df['Z_Momentum'] * FACTOR_WEIGHTS['MOMENTUM']) +
@@ -428,15 +380,11 @@ def run_full_analysis(CONFIG):
         (results_df['Z_Low_Volatility'] * FACTOR_WEIGHTS['LOW_VOL']) +
         (results_df['Z_Technical'] * FACTOR_WEIGHTS['TECHNICAL'])
     )
-    # --- END 6-FACTOR MODEL ---
-
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
     results_df.sort_values(by='Final Quant Score', ascending=False, inplace=True)
     results_df.set_index('Ticker', inplace=True)
-
-    # (Create result sets - Unchanged)
     top_10_market_cap = results_df.sort_values(by='Market Cap', ascending=False).head(10)
     top_20_quant = results_df.head(20)
     top_10_undervalued = results_df[
@@ -446,7 +394,6 @@ def run_full_analysis(CONFIG):
     new_crossovers = results_df[results_df['MACD_Signal'] == 'Bullish Crossover (Favorable)'].sort_values(by='Final Quant Score', ascending=False).head(10)
     near_support = results_df[results_df['Price vs. Levels'] == 'Near Support'].sort_values(by='Final Quant Score', ascending=False).head(10)
     top_quant_high_rr = top_20_quant[pd.to_numeric(top_20_quant['Risk/Reward Ratio'], errors='coerce') > 1].sort_values(by='Risk/Reward Ratio', ascending=False)
-
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
@@ -457,14 +404,12 @@ def run_full_analysis(CONFIG):
                            'Volatility (1Y)',
                            'Return on Equity (ROE)', 'Debt/Equity',
                            'Forward P/E', 'Sector P/E', 'P/B Ratio', 'Sector P/B']
-
             def format_for_excel(df):
                 df_copy = df.copy()
                 for col in format_cols:
                     if col in df_copy.columns:
                         df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce').apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
                 return df_copy
-
             format_for_excel(results_df).to_excel(writer, sheet_name='All Results', index=True)
             format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
             format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
@@ -472,12 +417,10 @@ def run_full_analysis(CONFIG):
             format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Rel & Graham)', index=True)
             format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
             format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
-
         status_text.info(f"تم حفظ تقرير الإكسل بنجاح: {excel_file_path}")
     except Exception as e:
         st.error(f"فشل حفظ ملف الإكسل: {e}")
         return False
-
     status_text.info("... (7/7) جارٍ حفظ تقرير PDF...")
     progress_bar.progress(0.99, text="Saving PDF report...")
     if REPORTLAB_AVAILABLE:
@@ -485,18 +428,13 @@ def run_full_analysis(CONFIG):
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             base_pdf_path = os.path.splitext(excel_file_path)[0]
             pdf_file_path = f"{base_pdf_path}_{timestamp}.pdf"
-
             doc = SimpleDocTemplate(pdf_file_path, pagesize=landscape(letter))
             elements = []
             styles = getSampleStyleSheet()
-
-            # --- ⭐️⭐️⭐️ PDF SUMMARY LOGIC STARTS HERE ⭐️⭐️⭐️ ---
             def create_pdf_table(title, df):
                 if df.empty:
                     return [Paragraph(f"No data for: {title}", styles['h2']), Spacer(1, 0.1*inch)]
-
                 df_formatted = format_for_excel(df.reset_index())
-                
                 cols_map = {
                     'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Relative P/E', 'Risk/Reward Ratio', 'Volatility (1Y)', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'Rel. P/E', 'R/R', 'Volatility', 'Div %']),
                     'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Relative P/E', 'Valuation (Graham)', 'Risk/Reward Ratio', 'Volatility (1Y)', '1-Year Momentum (12-1) (%)'], ['Ticker', 'Score', 'Sector', 'Price', 'Rel. P/E', 'Graham', 'R/R', 'Volatility', 'Momentum']),
@@ -505,7 +443,6 @@ def run_full_analysis(CONFIG):
                     'New Bullish Crossovers (MACD)': (['Ticker', 'Final Quant Score', 'MACD_Signal', 'Last Price', 'Trend (50/200 Day MA)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Relative P/E'], ['Ticker', 'Score', 'MACD', 'Price', 'Trend', 'R/R', 'Stop Loss', 'Rel. P/E']),
                     'Stocks Currently Near Support': (['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Volatility (1Y)'], ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Volatility'])
                 }
-
                 if title in cols_map:
                     cols, headers = cols_map[title]
                     existing_cols = [c for c in cols if c in df_formatted.columns]
@@ -513,13 +450,11 @@ def run_full_analysis(CONFIG):
                     df_pdf.columns = [headers[cols.index(c)] for c in existing_cols]
                 else:
                     df_pdf = df_formatted
-
                 data = [df_pdf.columns.tolist()] + df_pdf.values.tolist()
                 formatted_data = [data[0]]
                 for row in data[1:]:
                     new_row = [str(item) for item in row]
                     formatted_data.append(new_row)
-
                 table = Table(formatted_data, hAlign='LEFT')
                 table_style = TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.green),
@@ -533,8 +468,6 @@ def run_full_analysis(CONFIG):
                     ('ALTERNATINGBACKGROUND', (0, 1), (-1, -1), [colors.Color(0.9, 0.9, 0.9), colors.Color(0.98, 0.98, 0.98)])
                 ])
                 table.setStyle(table_style)
-
-                # --- ⭐️ NEW: Add Summary Text ⭐️ ---
                 SUMMARY_DESCRIPTIONS = {
                     'Top 10 by Market Cap (from SPUS)': "This table shows the 10 largest companies in the SPUS portfolio, sorted by their market capitalization.",
                     'Top 20 by Final Quant Score': "This table ranks the top 20 stocks based on the combined 6-factor quantitative score (Value, Momentum, Quality, Size, Volatility, Technicals).",
@@ -543,23 +476,13 @@ def run_full_analysis(CONFIG):
                     'New Bullish Crossovers (MACD)': "This table lists stocks that have just generated a 'Bullish Crossover' MACD signal, a positive momentum indicator.",
                     'Stocks Currently Near Support': "This table identifies stocks whose current price is very close to their 90-day technical support level, a potential entry point."
                 }
-                
-                # Start elements list
                 elements = [Paragraph(title, styles['h2']), Spacer(1, 0.1*inch), table, Spacer(1, 0.1*inch)]
-                
                 summary_text = SUMMARY_DESCRIPTIONS.get(title)
-                
                 if summary_text:
-                    # Use a standard body text style
                     summary_paragraph = Paragraph(summary_text, styles['BodyText'])
                     elements.append(summary_paragraph)
-                    
-                elements.append(Spacer(1, 0.25*inch)) # Add the final spacer
-                # --- ⭐️ END NEW ⭐️ ---
-
+                elements.append(Spacer(1, 0.25*inch))
                 return elements
-            # --- ⭐️⭐️⭐️ PDF SUMMARY LOGIC ENDS HERE ⭐️⭐️⭐️ ---
-
             elements.append(Paragraph(f"SPUS Analysis Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['h1']))
             elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", top_10_market_cap))
             elements.extend(create_pdf_table("Top 20 by Final Quant Score", top_20_quant))
@@ -567,22 +490,17 @@ def run_full_analysis(CONFIG):
             elements.extend(create_pdf_table("Top 10 Undervalued (Rel & Graham)", top_10_undervalued))
             elements.extend(create_pdf_table("New Bullish Crossovers (MACD)", new_crossovers))
             elements.extend(create_pdf_table("Stocks Currently Near Support", near_support))
-
             doc.build(elements)
             status_text.info(f"تم حفظ تقرير PDF بنجاح: {pdf_file_path}")
-
         except Exception as e:
             st.error(f"فشل إنشاء تقرير PDF: {e}")
     else:
         st.warning("تم تخطي إنشاء PDF. (مكتبة reportlab غير مثبتة)")
-
     progress_bar.progress(1.0, text="اكتمل التحليل!")
     status_text.success("اكتمل التحليل بنجاح!")
     return True
-# --- ⭐️ END UPDATED FUNCTION ---
 
-
-# --- واجهة مستخدم Streamlit الرئيسية (Unchanged) ---
+# --- ⭐️ UPDATED: واجهة مستخدم Streamlit الرئيسية ⭐️ ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
     st.title("SPUS Quantitative Analysis Dashboard")
@@ -639,6 +557,25 @@ def main():
                 )
         else:
             st.info("لم يتم العثور على تقرير PDF. سيتم إنشاؤه بعد تشغيل التحليل.")
+        
+        st.divider()
+        
+        # --- ⭐️⭐️⭐️ NEW: Glossary ⭐️⭐️⭐️ ---
+        with st.expander("Glossary & Abbreviations (قاموس المصطلحات)"):
+            st.markdown("""
+            * **Quant**: Quantitative (تحليل كمي)
+            * **P/E**: Price-to-Earnings (السعر إلى الأرباح)
+            * **P/B**: Price-to-Book (السعر إلى القيمة الدفترية)
+            * **ROE**: Return on Equity (العائد على حقوق الملكية)
+            * **D/E**: Debt-to-Equity (الدين إلى حقوق الملكية)
+            * **MACD**: Moving Average Convergence Divergence (مؤشر تقارب وتباعد المتوسطات المتحركة)
+            * **SMA**: Simple Moving Average (المتوسط المتحرك البسيط)
+            * **RSI**: Relative Strength Index (مؤشر القوة النسبية)
+            * **R/R**: Risk/Reward Ratio (نسبة المخاطرة إلى العائد)
+            * **Volatility (1Y)**: 1-Year Volatility (التقلب السنوي)
+            * **Momentum (12-1)**: 12-Month Momentum skipping the last month (الزخم لمدة 12 شهرًا مع تخطي الشهر الأخير)
+            """)
+        # --- ⭐️⭐️⭐️ END NEW ⭐️⭐️⭐️ ---
         
         st.divider()
         st.info("يعرض التطبيق آخر بيانات تم تحليلها. اضغط على الزر أعلاه لجلب أحدث البيانات.")

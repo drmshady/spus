@@ -21,7 +21,6 @@ try:
         process_ticker,
         calculate_support_resistance,
         calculate_financials_and_fair_price,
-        # ⭐️ NEW: Import the new sector function
         get_sector_valuation_averages
     )
 except ImportError as e:
@@ -72,46 +71,22 @@ def load_excel_data(excel_path):
         return None, None
 
 
-# --- ⭐️ UPDATED: التنسيق الشرطي المتقدم للجداول ⭐️ ---
+# --- دالة التنسيق الشرطي المتقدم للجداول (بدون تغيير) ---
 def apply_comprehensive_styling(df):
     """
-    يطبق تنسيقاً شاملاً على الجدول المعروض في Streamlit:
-    1. يختار فقط الأعمدة ذات الصلة.
-    2. يلون النصوص الشرطية (أخضر/أحمر/أزرق).
-    3. يضيف تدرجات لونية للأعمدة الرقمية.
+    يطبق تنسيقاً شاملاً على الجدول المعروض في Streamlit
     """
-    # 1. تحديد الأعمدة ذات الصلة للعرض
     RELEVANT_COLUMNS = [
-        'Ticker',
-        'Sector',
-        'Last Price',
-        'Valuation (Graham)',
-        'Fair Price (Graham)',
-        # --- ⭐️ NEW: Add Relative Valuation ---
-        'Relative P/E',
-        'Relative P/B',
-        'Forward P/E',
-        'Sector P/E',
-        # --- ⭐️ END NEW ---
-        'MACD_Signal',
-        'Trend (50/200 Day MA)',
-        'Price vs. Levels',
-        'Risk/Reward Ratio',
-        'Final Quant Score',
-        '1-Year Momentum (%)',
-        'Dividend Yield (%)',
-        'Risk % (to Support)',
-        'Cut Loss Level (Support)',
-        'Fib 161.8% Target',
-        'Next Earnings Date',
-        'Latest Headline'
+        'Ticker', 'Sector', 'Last Price', 'Valuation (Graham)', 'Fair Price (Graham)',
+        'Relative P/E', 'Relative P/B', 'Forward P/E', 'Sector P/E', 'MACD_Signal',
+        'Trend (50/200 Day MA)', 'Price vs. Levels', 'Risk/Reward Ratio', 'Final Quant Score',
+        '1-Year Momentum (%)', 'Dividend Yield (%)', 'Risk % (to Support)',
+        'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Next Earnings Date', 'Latest Headline'
     ]
 
-    # تصفية الأعمدة الموجودة فقط في الجدول الحالي
     cols_to_show = [col for col in RELEVANT_COLUMNS if col in df.columns]
     df_display = df[cols_to_show].copy()
 
-    # 2. تحديد الأعمدة وتطبيق تلوين النص
     text_style_cols = [col for col in 
                        ['Valuation (Graham)', 'MACD_Signal', 'Price vs. Levels', 'Relative P/E', 'Relative P/B'] 
                        if col in cols_to_show]
@@ -128,13 +103,8 @@ def apply_comprehensive_styling(df):
 
     styler = df_display.style.apply(lambda x: x.map(highlight_text), subset=text_style_cols)
 
-    # 3. تحديد الأعمدة وتطبيق التدرج اللوني
     numeric_gradient_cols = [
-        'Final Quant Score',
-        'Risk/Reward Ratio',
-        '1-Year Momentum (%)',
-        'Risk % (to Support)',
-        'Forward P/E' # ⭐️ Added P/E to gradient
+        'Final Quant Score', 'Risk/Reward Ratio', '1-Year Momentum (%)', 'Risk % (to Support)', 'Forward P/E'
     ]
     
     for col in numeric_gradient_cols:
@@ -149,23 +119,19 @@ def apply_comprehensive_styling(df):
         styler = styler.background_gradient(cmap='RdYlGn', subset=['1-Year Momentum (%)'], vmin=-20, vmax=50)
     if 'Risk % (to Support)' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Risk % (to Support)'], vmin=0, vmax=15)
-    # ⭐️ NEW: Gradient for P/E
     if 'Forward P/E' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Forward P/E'], vmin=0, vmax=40)
 
-    # ⭐️ NEW: Formatting for new columns
     format_dict = {
-        'Sector P/E': '{:.2f}',
-        'Sector P/B': '{:.2f}',
-        'Forward P/E': '{:.2f}',
+        'Sector P/E': '{:.2f}', 'Sector P/B': '{:.2f}', 'Forward P/E': '{:.2f}',
     }
     styler = styler.format(format_dict, na_rep="N/A")
 
     return styler
-# --- ⭐️ نهاية الدالة المحدثة ⭐️ ---
+# --- نهاية دالة التنسيق ---
 
 
-# --- دالة العثور على أحدث التقارير (Unchanged) ---
+# --- دالة العثور على أحدث التقارير (بدون تغيير) ---
 def get_latest_reports(excel_base_path):
     base_dir = os.path.dirname(excel_base_path)
     excel_name_no_ext = os.path.splitext(os.path.basename(excel_base_path))[0]
@@ -179,7 +145,7 @@ def get_latest_reports(excel_base_path):
 # --- نهاية الدالة ---
 
 
-# --- ⭐️ UPDATED: دالة تشغيل التحليل ⭐️ ---
+# --- دالة تشغيل التحليل (تم إصلاحها) ---
 def run_full_analysis(CONFIG):
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
@@ -215,16 +181,13 @@ def run_full_analysis(CONFIG):
     info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if not os.path.exists(info_cache_dir): os.makedirs(info_cache_dir)
 
-    # ⭐️ NEW: Pre-fetch sector data once
     if CONFIG.get('PREFETCH_SECTOR_DATA', True):
         status_text.info("... (Pre-fetch) جارٍ جلب بيانات القطاعات (Sectors)...")
         try:
-            # Call the function once to cache/fetch data before threading
             get_sector_valuation_averages("Technology") 
             status_text.info("... (Pre-fetch) اكتمل جلب بيانات القطاعات.")
         except Exception as e:
             status_text.warning(f"فشل جلب بيانات القطاعات مسبقاً: {e}")
-    # ⭐️ END NEW
 
     momentum_data = {}
     rsi_data = {}
@@ -359,14 +322,12 @@ def run_full_analysis(CONFIG):
             'Market Cap': fin_info.get('Market Cap'),
             'Valuation (Graham)': fin_info.get('Valuation (Graham)'),
             'Fair Price (Graham)': fin_info.get('Graham Number'),
-            # --- ⭐️ NEW: Add new data to results ---
             'Forward P/E': fin_info.get('Forward P/E'),
             'Sector P/E': fin_info.get('Sector P/E'),
             'Relative P/E': fin_info.get('Relative P/E'),
             'P/B Ratio': fin_info.get('P/B Ratio'),
             'Sector P/B': fin_info.get('Sector P/B'),
             'Relative P/B': fin_info.get('Relative P/B'),
-            # --- ⭐️ END NEW ---
             'MACD_Signal': macd_data.get(ticker, {}).get('Signal'),
             'Trend (50/200 Day MA)': trend_data.get(ticker, "N/A"),
             'Price vs. Levels': comparison_results.get(ticker, "N/A"),
@@ -398,16 +359,13 @@ def run_full_analysis(CONFIG):
     last_price_safe = last_price_pd.replace(0, pd.NA)
     results_df['Value_Discount'] = graham_price / last_price_safe
     
-    # ⭐️ NEW: Add relative P/E to Z-score calculation for Value
     stock_pe = pd.to_numeric(results_df['Forward P/E'], errors='coerce')
     sector_pe = pd.to_numeric(results_df['Sector P/E'], errors='coerce')
-    results_df['Value_Discount_PE'] = sector_pe / stock_pe # (Higher is better)
+    results_df['Value_Discount_PE'] = sector_pe / stock_pe
     
-    # Calculate Z-scores for both value metrics
     results_df['Z_Value_Graham'] = results_df.groupby('Sector')['Value_Discount'].transform(calculate_sector_zscore).fillna(0)
     results_df['Z_Value_Rel_PE'] = results_df.groupby('Sector')['Value_Discount_PE'].transform(calculate_sector_zscore).fillna(0)
     
-    # Average the two Z-scores for a blended Value score
     results_df['Z_Value'] = (results_df['Z_Value_Graham'] + results_df['Z_Value_Rel_PE']) / 2
     
     results_df['Z_Momentum'] = results_df.groupby('Sector')['1-Year Momentum (%)'].transform(calculate_sector_zscore).fillna(0)
@@ -446,7 +404,7 @@ def run_full_analysis(CONFIG):
                            'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio',
                            'Risk % (to Support)', 'Dividend Yield (%)', '1-Year Momentum (%)',
                            'Return on Equity (ROE)', 
-                           'Forward P/E', 'Sector P/E', 'P/B Ratio', 'Sector P/B'] # ⭐️ NEW
+                           'Forward P/E', 'Sector P/E', 'P/B Ratio', 'Sector P/B']
 
             def format_for_excel(df):
                 df_copy = df.copy()
@@ -459,7 +417,12 @@ def run_full_analysis(CONFIG):
             format_for_excel(top_10_market_cap).to_excel(writer, sheet_name='Top 10 by Market Cap (SPUS)', index=True)
             format_for_excel(top_20_quant).to_excel(writer, sheet_name='Top 20 Final Quant Score', index=True)
             format_for_excel(top_quant_high_rr).to_excel(writer, sheet_name='Top Quant & High R-R', index=True)
-            format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Rel/Graham)', index=True) # ⭐️ NEW
+            
+            # --- ⭐️⭐️⭐️ FIX #1 ⭐️⭐️⭐️ ---
+            # Changed sheet_name from 'Rel/Graham' to 'Rel & Graham'
+            format_for_excel(top_10_undervalued).to_excel(writer, sheet_name='Top 10 Undervalued (Rel & Graham)', index=True)
+            # --- ⭐️⭐️⭐️ END FIX #1 ⭐️⭐️⭐️ ---
+            
             format_for_excel(new_crossovers).to_excel(writer, sheet_name='New Bullish Crossovers (MACD)', index=True)
             format_for_excel(near_support).to_excel(writer, sheet_name='Stocks Currently Near Support', index=True)
 
@@ -486,15 +449,17 @@ def run_full_analysis(CONFIG):
 
                 df_formatted = format_for_excel(df.reset_index())
                 
-                # ⭐️ UPDATED PDF Columns
+                # --- ⭐️⭐️⭐️ FIX #2 ⭐️⭐️⭐️ ---
+                # Changed cols_map key from 'Rel/Graham' to 'Rel & Graham'
                 cols_map = {
                     'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Relative P/E', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'Rel. P/E', 'R/R', 'Stop Loss', 'Div %']),
                     'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Relative P/E', 'Valuation (Graham)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Shares to Buy ($50 Risk)'], ['Ticker', 'Score', 'Sector', 'Price', 'Rel. P/E', 'Graham', 'R/R', 'Stop Loss', 'Shares']),
                     'Top Quant & High R-R (Ratio > 1)': (['Ticker', 'Final Quant Score', 'Risk/Reward Ratio', 'Relative P/E', 'Last Price', 'Cut Loss Level (Support)', 'Fib 161.8% Target', 'Shares to Buy ($50 Risk)'], ['Ticker', 'Score', 'R/R', 'Rel. P/E', 'Price', 'Stop Loss', 'Fib Target', 'Shares']),
-                    'Top 10 Undervalued (Rel/Graham)': (['Ticker', 'Final Quant Score', 'Relative P/E', 'Valuation (Graham)', 'Last Price', 'Fair Price (Graham)', 'Sector P/E', 'Forward P/E'], ['Ticker', 'Score', 'Rel. P/E', 'Graham', 'Price', 'Graham Price', 'Sector P/E', 'Stock P/E']),
+                    'Top 10 Undervalued (Rel & Graham)': (['Ticker', 'Final Quant Score', 'Relative P/E', 'Valuation (Graham)', 'Last Price', 'Fair Price (Graham)', 'Sector P/E', 'Forward P/E'], ['Ticker', 'Score', 'Rel. P/E', 'Graham', 'Price', 'Graham Price', 'Sector P/E', 'Stock P/E']),
                     'New Bullish Crossovers (MACD)': (['Ticker', 'Final Quant Score', 'MACD_Signal', 'Last Price', 'Trend (50/200 Day MA)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Relative P/E'], ['Ticker', 'Score', 'MACD', 'Price', 'Trend', 'R/R', 'Stop Loss', 'Rel. P/E']),
                     'Stocks Currently Near Support': (['Ticker', 'Final Quant Score', 'Price vs. Levels', 'Last Price', 'Risk % (to Support)', 'Risk/Reward Ratio', 'Cut Loss Level (Support)', 'Relative P/E'], ['Ticker', 'Score', 'vs. Levels', 'Price', 'Risk %', 'R/R', 'Stop Loss', 'Rel. P/E'])
                 }
+                # --- ⭐️⭐️⭐️ END FIX #2 ⭐️⭐️⭐️ ---
 
                 if title in cols_map:
                     cols, headers = cols_map[title]
@@ -531,7 +496,12 @@ def run_full_analysis(CONFIG):
             elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", top_10_market_cap))
             elements.extend(create_pdf_table("Top 20 by Final Quant Score", top_20_quant))
             elements.extend(create_pdf_table("Top Quant & High R-R (Ratio > 1)", top_quant_high_rr))
-            elements.extend(create_pdf_table("Top 10 Undervalued (Rel/Graham)", top_10_undervalued))
+            
+            # --- ⭐️⭐️⭐️ FIX #3 ⭐️⭐️⭐️ ---
+            # Changed PDF title from 'Rel/Graham' to 'Rel & Graham'
+            elements.extend(create_pdf_table("Top 10 Undervalued (Rel & Graham)", top_10_undervalued))
+            # --- ⭐️⭐️⭐️ END FIX #3 ⭐️⭐️⭐️ ---
+
             elements.extend(create_pdf_table("New Bullish Crossovers (MACD)", new_crossovers))
             elements.extend(create_pdf_table("Stocks Currently Near Support", near_support))
 
@@ -546,10 +516,10 @@ def run_full_analysis(CONFIG):
     progress_bar.progress(1.0, text="اكتمل التحليل!")
     status_text.success("اكتمل التحليل بنجاح!")
     return True
-# --- ⭐️ END UPDATED FUNCTION ---
+# --- نهاية دالة التحليل ---
 
 
-# --- واجهة مستخدم Streamlit الرئيسية (Unchanged) ---
+# --- واجهة مستخدم Streamlit الرئيسية (تم إصلاحها) ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
     st.title("SPUS Quantitative Analysis Dashboard")
@@ -619,9 +589,14 @@ def main():
         st.success(f"يتم الآن عرض البيانات من آخر تحليل (بتاريخ: {datetime.fromtimestamp(mod_time).strftime('%Y-%m-%d %H:%M:%S')})")
 
         tab_titles = list(data_sheets.keys())
-        # ⭐️ NEW: Update tab name
+        
+        # --- ⭐️⭐️⭐️ FIX #4 ⭐️⭐️⭐️ ---
+        # Handle old/broken tab names and standardize to the new correct name
         if "Top 10 Undervalued (Graham)" in tab_titles:
-            tab_titles[tab_titles.index("Top 10 Undervalued (Graham)")] = "Top 10 Undervalued (Rel/Graham)"
+            tab_titles[tab_titles.index("Top 10 Undervalued (Graham)")] = "Top 10 Undervalued (Rel & Graham)"
+        elif "Top 10 Undervalued (Rel/Graham)" in tab_titles:
+            tab_titles[tab_titles.index("Top 10 Undervalued (Rel/Graham)")] = "Top 10 Undervalued (Rel & Graham)"
+        # --- ⭐️⭐️⭐️ END FIX #4 ⭐️⭐️⭐️ ---
             
         if "All Results" in tab_titles:
             tab_titles.remove("All Results")
@@ -659,10 +634,8 @@ def main():
 
                 st.divider()
 
-                # --- ⭐️ Apply the updated styling function ---
                 styled_df = apply_comprehensive_styling(df_to_show)
                 st.dataframe(styled_df, use_container_width=True)
-                # --- ⭐️ ---
 
                 csv = df_to_show.to_csv(index=True).encode('utf-8')
                 st.download_button(

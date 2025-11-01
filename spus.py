@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-SPUS Quantitative Analyzer v12 (Fibonacci & Relative Valuation Model)
+SPUS Quantitative Analyzer v13 (Robust Factors)
 
-This script performs a multi-factor quantitative analysis (Value, Momentum, Quality, Size)
-on SPUS holdings. It calculates dynamic Fibonacci levels and now integrates
-relative valuation by comparing stock P/E and P/B ratios to their sector averages.
+This script now calculates:
+1. 12-1 Month Momentum (skipping the last month) to avoid short-term reversion.
+2. 1-Year Annualized Volatility (as a risk metric).
 """
 
 import requests
@@ -21,6 +21,7 @@ from openpyxl.styles import Font
 import io
 import json
 import requests.exceptions
+import numpy as np # Import numpy for volatility calculation
 
 # --- ⭐️ NEW: Import finvizfinance ---
 try:
@@ -53,12 +54,8 @@ def load_config(path='config.json'):
 CONFIG = load_config('config.json')
 
 
-# --- ⭐️ NEW: Function to get Sector Averages ---
+# --- Function to get Sector Averages (Unchanged) ---
 def get_sector_valuation_averages(sector):
-    """
-    Fetches and caches average P/E and P/B for a given sector from Finviz.
-    Cache duration is set in config.json (default: 24 hours).
-    """
     if not FINVIZ_AVAILABLE or CONFIG is None:
         return None, None
 
@@ -75,35 +72,28 @@ def get_sector_valuation_averages(sector):
 
     sector_data = {}
     try:
-        # Load from cache if valid
         if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path) < cache_duration_seconds):
             with open(cache_path, 'r') as f:
                 sector_data = json.load(f)
             logging.info("Loaded sector valuation data from cache.")
-        
-        # Fetch new data if cache is old or doesn't exist
         else:
             logging.info("Fetching new sector valuation data from Finviz...")
             f_group = finvizfinance_group()
-            # 'valuation' contains P/E, P/B, etc.
             df = f_group.screener_view(group_by='Sector', order_by='Name', view='Valuation')
             df.set_index('Name', inplace=True)
-            # Convert to dictionary for easy JSON serialization
             sector_data = df.to_dict(orient='index')
             with open(cache_path, 'w') as f:
                 json.dump(sector_data, f, indent=4)
 
     except Exception as e:
         logging.error(f"Error fetching/caching sector data from Finviz: {e}")
-        # Try to load expired cache as a last resort
         if os.path.exists(cache_path):
             with open(cache_path, 'r') as f:
                 sector_data = json.load(f)
             logging.warning("Using expired sector cache due to fetch error.")
         else:
-            return None, None # No data available
+            return None, None
 
-    # Get data for the specific sector
     if sector in sector_data:
         try:
             sector_pe = pd.to_numeric(sector_data[sector].get('P/E'), errors='coerce')
@@ -115,18 +105,18 @@ def get_sector_valuation_averages(sector):
     else:
         logging.warning(f"Sector '{sector}' not found in Finviz group data.")
         return None, None
-# --- ⭐️ END NEW FUNCTION ---
-
 
 # --- FETCHER FUNCTION (Unchanged) ---
 def fetch_spus_tickers():
+    # ⭐️ NOTE: This is still using a local CSV.
+    # As discussed, this is a major weakness.
+    # Consider replacing with a direct web fetch.
     local_path = os.path.join(BASE_DIR, CONFIG['SPUS_HOLDINGS_CSV_PATH'])
     ticker_column_name = 'StockTicker' 
 
     if not os.path.exists(local_path):
         logging.error(f"Local SPUS holdings file not found at: {local_path}")
         return []
-
     try:
         holdings_df = pd.read_csv(local_path)
     except pd.errors.ParserError:
@@ -145,11 +135,9 @@ def fetch_spus_tickers():
     except Exception as e:
         logging.error(f"An unexpected error occurred during local CSV read/parse: {e}")
         return []
-
     if ticker_column_name not in holdings_df.columns:
         logging.error(f"CSV from {local_path} downloaded, but '{ticker_column_name}' column not found.")
         return []
-
     try:
         holdings_df[ticker_column_name] = holdings_df[ticker_column_name].astype(str)
         first_nan_index = holdings_df[holdings_df[ticker_column_name].isna()].index[0]
@@ -160,41 +148,32 @@ def fetch_spus_tickers():
     except Exception as e:
          logging.warning(f"Error cleaning footer metadata: {e}")
          pass
-
     ticker_symbols = holdings_df[ticker_column_name].tolist()
     ticker_symbols = [s for s in ticker_symbols if isinstance(s, str) and s and s != ticker_column_name and 'CASH' not in s]
     logging.info(f"Successfully fetched {len(ticker_symbols)} ticker symbols for SPUS from local file.")
     return ticker_symbols
-# --- END FETCHER FUNCTION ---
-
 
 # --- Support/Resistance Function (Unchanged) ---
 def calculate_support_resistance(hist_df):
     if hist_df is None or hist_df.empty:
         return None, None, None, None, None, None
-
     try:
         lookback_period = CONFIG.get('SR_LOOKBACK_PERIOD', 90)
         if len(hist_df) < lookback_period:
             recent_hist = hist_df
         else:
             recent_hist = hist_df.iloc[-lookback_period:]
-
         support_val = recent_hist['Low'].min()
         support_date = recent_hist['Low'].idxmin()
         resistance_val = recent_hist['High'].max()
         resistance_date = recent_hist['High'].idxmax()
-
         fib_61_8_level = None
         fib_161_8_level = None
         high_low_diff = resistance_val - support_val
-
         if high_low_diff > 0:
             fib_61_8_level = resistance_val - (high_low_diff * 0.618)
             fib_161_8_level = resistance_val + (high_low_diff * 0.618)
-
         return support_val, support_date, resistance_val, resistance_date, fib_61_8_level, fib_161_8_level
-
     except Exception as e:
         logging.warning(f"Error in calculate_support_resistance: {e}. Defaulting to long-term S/R.")
         support_val = hist_df['Low'].min()
@@ -202,15 +181,9 @@ def calculate_support_resistance(hist_df):
         resistance_val = hist_df['High'].max()
         resistance_date = hist_df['High'].idxmax()
         return support_val, support_date, resistance_val, resistance_date, None, None
-# --- END Support/Resistance Function ---
 
-
-# --- ⭐️ UPDATED: Financials and Fair Price Function ---
+# --- Financials and Fair Price Function (Unchanged) ---
 def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
-    """
-    Calculates financials. NOW includes relative sector valuation.
-    Caches .info data and sector data.
-    """
     info = {}
     cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if not os.path.exists(cache_dir):
@@ -235,7 +208,7 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
         pe_ratio = info.get('forwardPE', None)
         pb_ratio = info.get('priceToBook', None)
         div_yield = info.get('dividendYield', None)
-        debt_to_equity = info.get('debtToEquity', None)
+        debt_to_equity = info.get('debtToEquity', None) # <-- We need this for the composite score
         rev_growth = info.get('revenueGrowth', None)
         roe = info.get('returnOnEquity', None)
         ev_ebitda = info.get('enterpriseToEbitda', None)
@@ -244,7 +217,6 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
         low_52wk = info.get('fiftyTwoWeekLow', None)
         market_cap = info.get('marketCap', None)
         sector = info.get('sector', 'N/A')
-
         eps = info.get('trailingEps', None)
         bvps = None
         graham_number = None
@@ -260,25 +232,21 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
         elif eps is not None and eps <= 0:
             valuation_signal = "Unprofitable (EPS < 0)"
 
-        # --- ⭐️ NEW: Relative Valuation Logic ---
         sector_pe_avg, sector_pb_avg = None, None
         relative_pe_signal, relative_pb_signal = "N/A", "N/A"
         
         if sector != 'N/A' and FINVIZ_AVAILABLE:
             sector_pe_avg, sector_pb_avg = get_sector_valuation_averages(sector)
-        
             if pe_ratio is not None and sector_pe_avg is not None and sector_pe_avg > 0:
                 if pe_ratio < sector_pe_avg:
                     relative_pe_signal = "Undervalued (Sector)"
                 else:
                     relative_pe_signal = "Overvalued (Sector)"
-            
             if pb_ratio is not None and sector_pb_avg is not None and sector_pb_avg > 0:
                 if pb_ratio < sector_pb_avg:
                     relative_pb_signal = "Undervalued (Sector)"
                 else:
                     relative_pb_signal = "Overvalued (Sector)"
-        # --- ⭐️ END NEW ---
 
         financial_dict = {
             'Forward P/E': pe_ratio,
@@ -286,7 +254,7 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             'Market Cap': market_cap,
             'Sector': sector,
             'Dividend Yield': div_yield * 100 if div_yield else None,
-            'Debt/Equity': debt_to_equity,
+            'Debt/Equity': debt_to_equity, # <-- Key metric for Quality
             'Revenue Growth (QoQ)': rev_growth * 100 if rev_growth else None,
             'Return on Equity (ROE)': roe * 100 if roe else None,
             'EV/EBITDA': ev_ebitda,
@@ -295,7 +263,6 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             '52 Week Low': low_52wk,
             'Graham Number': graham_number,
             'Valuation (Graham)': valuation_signal,
-            # --- ⭐️ NEW: Add to dict ---
             'Sector P/E': sector_pe_avg,
             'Relative P/E': relative_pe_signal,
             'Sector P/B': sector_pb_avg,
@@ -305,22 +272,20 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
 
     except Exception as e:
         logging.error(f"Error fetching/processing fundamental data for {ticker}: {e}")
-        # Ensure all keys exist, even on failure
         default_keys = ['Forward P/E', 'P/B Ratio', 'Market Cap', 'Sector', 'Dividend Yield', 
                         'Debt/Equity', 'Revenue Growth (QoQ)', 'Graham Number', 'Valuation (Graham)', 
                         'Return on Equity (ROE)', 'EV/EBITDA', 'Price/Sales (P/S)', '52 Week High', '52 Week Low',
                         'Sector P/E', 'Relative P/E', 'Sector P/B', 'Relative P/B']
         return {key: None for key in default_keys}
-# --- ⭐️ END UPDATED FUNCTION ---
 
-
-# --- Process Ticker Function (Unchanged) ---
+# --- ⭐️ UPDATED: Process Ticker Function ⭐️ ---
 def process_ticker(ticker):
     null_return = {
-        'ticker': ticker, 'momentum': None, 'rsi': None, 'last_price': None,
+        'ticker': ticker, 'momentum_12_1': None, 'rsi': None, 'last_price': None,
         'support_resistance': None, 'trend': None, 'macd': None, 'signal_line': None,
         'hist_val': None, 'macd_signal': None, 'financial_dict': None, 'success': False,
-        'recent_news': "N/A", 'latest_headline': "N/A", 'earnings_date': "N/A"
+        'recent_news': "N/A", 'latest_headline': "N/A", 'earnings_date': "N/A",
+        'volatility_1y': None # <-- NEW
     }
 
     if CONFIG is None:
@@ -343,7 +308,6 @@ def process_ticker(ticker):
             existing_hist_df = pd.read_feather(file_path)
             existing_hist_df['Date'] = pd.to_datetime(existing_hist_df['Date'])
             existing_hist_df.set_index('Date', inplace=True)
-
             if not existing_hist_df.empty:
                 existing_hist_df.index = pd.to_datetime(existing_hist_df.index, utc=True)
                 last_date = existing_hist_df.index.max()
@@ -355,7 +319,6 @@ def process_ticker(ticker):
     new_hist = pd.DataFrame()
     ticker_obj = None
     fetch_success = False
-
     today = datetime.now().date()
     should_fetch = True
     if start_date:
@@ -368,8 +331,10 @@ def process_ticker(ticker):
             try:
                 ticker_obj = yf.Ticker(ticker)
                 if start_date:
+                    # Fetch only new data
                     new_hist = ticker_obj.history(start=start_date.strftime('%Y-%m-%d'))
                 else:
+                    # Fetch full history if no cache
                     new_hist = ticker_obj.history(period=CONFIG['HISTORICAL_DATA_PERIOD'])
                 fetch_success = True
                 break
@@ -399,7 +364,36 @@ def process_ticker(ticker):
          combined_hist = combined_hist[~combined_hist.index.duplicated(keep='first')]
 
     hist = combined_hist
-    momentum = None
+    
+    # --- ⭐️ NEW: Robust 12-1 Momentum & Volatility ---
+    momentum_12_1 = None
+    volatility_1y = None
+    try:
+        # Resample to monthly prices, getting the last price of each month
+        monthly_hist = hist['Close'].resample('ME').last()
+        
+        # 1. 12-1 Momentum
+        if len(monthly_hist) >= 14: # Need 13 months of data + current partial month
+            # Price 1 month ago (end of last month)
+            price_1m_ago = monthly_hist.iloc[-2]
+            # Price 13 months ago (end of 13th month ago)
+            price_13m_ago = monthly_hist.iloc[-14]
+            
+            if price_13m_ago != 0:
+                momentum_12_1 = ((price_1m_ago - price_13m_ago) / price_13m_ago) * 100
+        
+        # 2. 1-Year Annualized Volatility
+        daily_returns = hist['Close'].pct_change()
+        # Get last 252 trading days (approx 1 year)
+        if len(daily_returns) >= 252:
+            returns_1y = daily_returns.iloc[-252:]
+            # Calculate annualized volatility
+            volatility_1y = returns_1y.std() * np.sqrt(252)
+        
+    except Exception as e:
+        logging.warning(f"[{ticker}] Error calculating 12-1 Momentum or Volatility: {e}")
+    # --- ⭐️ END NEW CALCULATIONS ---
+
     rsi = None
     last_price = None
     support_resistance = None
@@ -423,15 +417,6 @@ def process_ticker(ticker):
 
     if not hist.empty:
         last_price = hist['Close'].iloc[-1]
-        min_data_points = CONFIG['MIN_DATA_POINTS_MOMENTUM']
-        if len(hist) >= min_data_points:
-            try:
-                price_now = hist['Close'].iloc[-1]
-                price_year_ago = hist['Close'].iloc[-min_data_points]
-                momentum = ((price_now - price_year_ago) / price_year_ago) * 100
-            except IndexError:
-                pass
-
         rsi = hist[rsi_col].iloc[-1] if rsi_col in hist.columns else None
         last_short_ma = hist[short_ma_col].iloc[-1] if short_ma_col in hist.columns else None
         last_long_ma = hist[long_ma_col].iloc[-1] if long_ma_col in hist.columns else None
@@ -482,7 +467,6 @@ def process_ticker(ticker):
         if ticker_obj is None:
             ticker_obj = yf.Ticker(ticker)
 
-        # This now calls the updated function
         financial_dict = calculate_financials_and_fair_price(ticker_obj, last_price, ticker)
 
         recent_news_flag = "No"
@@ -498,7 +482,6 @@ def process_ticker(ticker):
                     if item.get('providerPublishTime', 0) > forty_eight_hours_ago_ts:
                         recent_news_flag = "Yes"
                         break
-
             calendar = ticker_obj.calendar
             if calendar and isinstance(calendar, dict) and 'Earnings Date' in calendar and calendar['Earnings Date']:
                 date_val = calendar['Earnings Date'][0]
@@ -519,7 +502,8 @@ def process_ticker(ticker):
 
         return {
             'ticker': ticker,
-            'momentum': momentum,
+            'momentum_12_1': momentum_12_1, # <-- UPDATED
+            'volatility_1y': volatility_1y, # <-- NEW
             'rsi': rsi,
             'last_price': last_price,
             'support_resistance': support_resistance,
@@ -536,4 +520,4 @@ def process_ticker(ticker):
         }
 
     return null_return
-# --- END Process Ticker Function ---
+# --- ⭐️ END UPDATED FUNCTION ---

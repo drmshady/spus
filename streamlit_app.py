@@ -69,7 +69,7 @@ def load_excel_data(excel_path):
         return None, None
 
 
-# --- ⭐️ UPDATED: دالة التنسيق الشرطي ⭐️ ---
+# --- دالة التنسيق الشرطي المتقدم للجداول (Unchanged) ---
 def apply_comprehensive_styling(df):
     """
     Applies comprehensive styling, now including Volatility and new Momentum.
@@ -130,10 +130,8 @@ def apply_comprehensive_styling(df):
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Risk % (to Support)'], vmin=0, vmax=15)
     if 'Forward P/E' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Forward P/E'], vmin=0, vmax=40)
-    # ⭐️ NEW: Gradient for Volatility (Reversed: Low is Green)
     if 'Volatility (1Y)' in df_display.columns:
         styler = styler.background_gradient(cmap='RdYlGn_r', subset=['Volatility (1Y)'], vmin=0.1, vmax=0.6)
-
 
     format_dict = {
         'Sector P/E': '{:.2f}', 'Sector P/B': '{:.2f}', 'Forward P/E': '{:.2f}',
@@ -144,12 +142,9 @@ def apply_comprehensive_styling(df):
         'Debt/Equity': '{:.2f}',
         'Dividend Yield (%)': '{:.2f}%',
     }
-    # Apply formatting, handling columns that might not be in all tabs
     styler = styler.format(format_dict, na_rep="N/A", subset=[col for col in format_dict if col in df_display.columns])
 
     return styler
-# --- ⭐️ END UPDATED FUNCTION ---
-
 
 # --- دالة العثور على أحدث التقارير (Unchanged) ---
 def get_latest_reports(excel_base_path):
@@ -163,28 +158,17 @@ def get_latest_reports(excel_base_path):
     excel_path = excel_base_path if os.path.exists(excel_base_path) else None
     return excel_path, latest_pdf
 
-# --- ⭐️ NEW: Robust Z-Score Function ⭐️ ---
+# --- Robust Z-Score Function (Unchanged) ---
 def calculate_robust_zscore(series):
-    """
-    Calculates a robust Z-score using the Median and Median Absolute Deviation (MAD).
-    This is resistant to extreme outliers.
-    """
     series = pd.to_numeric(series, errors='coerce')
     median = series.median()
-    # MAD = median(|x - median(x)|)
     mad = (series - median).abs().median()
-    
-    # Handle case where MAD is 0 (e.g., all values are the same)
     if mad == 0:
         return 0
-        
-    # The 1.4826 constant scales MAD to be a consistent estimator of the standard deviation
     z_score = (series - median) / (1.4826 * mad)
     return z_score
-# --- ⭐️ END NEW FUNCTION ---
 
-
-# --- ⭐️ UPDATED: دالة تشغيل التحليل (Major Upgrade) ⭐️ ---
+# --- ⭐️ UPDATED: دالة تشغيل التحليل ⭐️ ---
 def run_full_analysis(CONFIG):
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
@@ -202,7 +186,7 @@ def run_full_analysis(CONFIG):
     )
 
     status_text.info("... (1/7) جارٍ جلب قائمة الرموز (Tickers)...")
-    ticker_symbols = fetch_spus_tickers() # Using the (hopefully) updated function
+    ticker_symbols = fetch_spus_tickers() 
 
     if not ticker_symbols:
         status_text.warning("لم يتم العثور على رموز. تم إلغاء التحليل.")
@@ -230,7 +214,7 @@ def run_full_analysis(CONFIG):
 
     # (Dictionaries for data collection)
     momentum_data = {}
-    volatility_data = {} # <-- NEW
+    volatility_data = {} 
     rsi_data = {}
     last_prices = {}
     support_resistance_levels = {}
@@ -261,12 +245,8 @@ def run_full_analysis(CONFIG):
                 if result['success']:
                     ticker = result['ticker']
                     processed_tickers.add(ticker)
-                    
-                    # --- ⭐️ Map new data ---
                     if result['momentum_12_1'] is not None: momentum_data[ticker] = result['momentum_12_1']
                     if result['volatility_1y'] is not None: volatility_data[ticker] = result['volatility_1y']
-                    # --- ⭐️ ---
-                    
                     if result['rsi'] is not None: rsi_data[ticker] = result['rsi']
                     if result['last_price'] is not None: last_prices[ticker] = result['last_price']
                     if result['support_resistance'] is not None: support_resistance_levels[ticker] = result['support_resistance']
@@ -335,7 +315,7 @@ def run_full_analysis(CONFIG):
     status_text.info("... (5/7) جارٍ تجميع النتائج وحساب Z-Scores...")
     progress_bar.progress(0.95, text="Aggregating and Scoring...")
 
-    tickers_to_report = list(last_prices.keys()) # Use last_prices as the base
+    tickers_to_report = list(last_prices.keys()) 
     if not tickers_to_report:
         status_text.warning("لا توجد بيانات كافية لإنشاء التقرير.")
         return False
@@ -386,27 +366,24 @@ def run_full_analysis(CONFIG):
             'Latest Headline': headline_data.get(ticker, "N/A"),
             'Dividend Yield (%)': fin_info.get('Dividend Yield'),
             'Return on Equity (ROE)': fin_info.get('Return on Equity (ROE)'),
-            'Debt/Equity': fin_info.get('Debt/Equity'), # <-- NEWLY ADDED
-            '1-Year Momentum (12-1) (%)': momentum_data.get(ticker, pd.NA), # <-- UPDATED
-            'Volatility (1Y)': volatility_data.get(ticker, pd.NA), # <-- NEW
+            'Debt/Equity': fin_info.get('Debt/Equity'), 
+            '1-Year Momentum (12-1) (%)': momentum_data.get(ticker, pd.NA),
+            'Volatility (1Y)': volatility_data.get(ticker, pd.NA),
         }
         results_list.append(result_data)
 
     results_df = pd.DataFrame(results_list)
 
-    # --- ⭐️ NEW 6-FACTOR MODEL LOGIC ⭐️ ---
-    
-    # 1. Define new weights
+    # --- 6-FACTOR MODEL LOGIC (Unchanged) ---
     FACTOR_WEIGHTS = {
         'VALUE': 0.25, 
         'MOMENTUM': 0.15, 
         'QUALITY': 0.20, 
         'SIZE': 0.10, 
-        'LOW_VOL': 0.15,  # New Risk Factor
-        'TECHNICAL': 0.15   # New Timing Factor
+        'LOW_VOL': 0.15,
+        'TECHNICAL': 0.15
     }
 
-    # 2. Calculate Value Z-Scores (Unchanged)
     graham_price = pd.to_numeric(results_df['Fair Price (Graham)'], errors='coerce')
     last_price_pd = pd.to_numeric(results_df['Last Price'], errors='coerce')
     last_price_safe = last_price_pd.replace(0, pd.NA)
@@ -415,31 +392,22 @@ def run_full_analysis(CONFIG):
     sector_pe = pd.to_numeric(results_df['Sector P/E'], errors='coerce')
     results_df['Value_Discount_PE'] = sector_pe / stock_pe
     
-    # Use ROBUST Z-Score
     results_df['Z_Value_Graham'] = results_df.groupby('Sector')['Value_Discount'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Value_Rel_PE'] = results_df.groupby('Sector')['Value_Discount_PE'].transform(calculate_robust_zscore).fillna(0)
     results_df['Z_Value'] = (results_df['Z_Value_Graham'] + results_df['Z_Value_Rel_PE']) / 2
     
-    # 3. Calculate Momentum Z-Score (Using new 12-1 data)
     results_df['Z_Momentum'] = results_df.groupby('Sector')['1-Year Momentum (12-1) (%)'].transform(calculate_robust_zscore).fillna(0)
     
-    # 4. Calculate Composite Quality Z-Score
     results_df['Z_Profitability'] = results_df.groupby('Sector')['Return on Equity (ROE)'].transform(calculate_robust_zscore).fillna(0)
-    # Invert Debt/Equity (lower is better)
     results_df['Z_Leverage'] = results_df.groupby('Sector')['Debt/Equity'].transform(calculate_robust_zscore).fillna(0) * -1 
     results_df['Z_Payout'] = results_df.groupby('Sector')['Dividend Yield (%)'].transform(calculate_robust_zscore).fillna(0)
-    # Average the sub-factors
     results_df['Z_Quality'] = (results_df['Z_Profitability'] + results_df['Z_Leverage'] + results_df['Z_Payout']) / 3
 
-    # 5. Calculate Size Z-Score (Unchanged, but now robust)
     results_df['Market Cap'] = pd.to_numeric(results_df['Market Cap'], errors='coerce')
-    results_df['Z_Size'] = results_df.groupby('Sector')['Market Cap'].transform(calculate_robust_zscore).fillna(0) * -1 # Small caps are better
+    results_df['Z_Size'] = results_df.groupby('Sector')['Market Cap'].transform(calculate_robust_zscore).fillna(0) * -1 
 
-    # 6. NEW: Calculate Low Volatility Z-Score
-    # Invert Volatility (lower is better)
     results_df['Z_Low_Volatility'] = results_df.groupby('Sector')['Volatility (1Y)'].transform(calculate_robust_zscore).fillna(0) * -1
     
-    # 7. NEW: Calculate Technical Z-Score
     def get_technical_score(row):
         score = 0
         if str(row['MACD_Signal']).startswith('Bullish'):
@@ -447,12 +415,11 @@ def run_full_analysis(CONFIG):
         if str(row['Trend (50/200 Day MA)']) == 'Confirmed Uptrend':
             score += 1
         if str(row['Price vs. Levels']) == 'Near Support':
-            score += 0.5 # Half point bonus
+            score += 0.5
         return score
     results_df['Technical_Score'] = results_df.apply(get_technical_score, axis=1)
     results_df['Z_Technical'] = results_df.groupby('Sector')['Technical_Score'].transform(calculate_robust_zscore).fillna(0)
 
-    # 8. Calculate Final 6-Factor Quant Score
     results_df['Final Quant Score'] = (
         (results_df['Z_Value'] * FACTOR_WEIGHTS['VALUE']) +
         (results_df['Z_Momentum'] * FACTOR_WEIGHTS['MOMENTUM']) +
@@ -461,9 +428,8 @@ def run_full_analysis(CONFIG):
         (results_df['Z_Low_Volatility'] * FACTOR_WEIGHTS['LOW_VOL']) +
         (results_df['Z_Technical'] * FACTOR_WEIGHTS['TECHNICAL'])
     )
-    # --- ⭐️ END 6-FACTOR MODEL ⭐️ ---
+    # --- END 6-FACTOR MODEL ---
 
-    # (Sorting and final prep)
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
@@ -484,12 +450,11 @@ def run_full_analysis(CONFIG):
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
-            # Add new columns to format list
             format_cols = ['Last Price', 'Fair Price (Graham)', 'Cut Loss Level (Support)',
                            'Fib 161.8% Target', 'Final Quant Score', 'Risk/Reward Ratio',
                            'Risk % (to Support)', 'Dividend Yield (%)', 
-                           '1-Year Momentum (12-1) (%)', # <-- UPDATED
-                           'Volatility (1Y)', # <-- NEW
+                           '1-Year Momentum (12-1) (%)',
+                           'Volatility (1Y)',
                            'Return on Equity (ROE)', 'Debt/Equity',
                            'Forward P/E', 'Sector P/E', 'P/B Ratio', 'Sector P/B']
 
@@ -525,13 +490,13 @@ def run_full_analysis(CONFIG):
             elements = []
             styles = getSampleStyleSheet()
 
+            # --- ⭐️⭐️⭐️ PDF SUMMARY LOGIC STARTS HERE ⭐️⭐️⭐️ ---
             def create_pdf_table(title, df):
                 if df.empty:
                     return [Paragraph(f"No data for: {title}", styles['h2']), Spacer(1, 0.1*inch)]
 
                 df_formatted = format_for_excel(df.reset_index())
                 
-                # Update PDF columns to reflect new model
                 cols_map = {
                     'Top 10 by Market Cap (from SPUS)': (['Ticker', 'Market Cap', 'Sector', 'Last Price', 'Final Quant Score', 'Relative P/E', 'Risk/Reward Ratio', 'Volatility (1Y)', 'Dividend Yield (%)'], ['Ticker', 'Mkt Cap', 'Sector', 'Price', 'Score', 'Rel. P/E', 'R/R', 'Volatility', 'Div %']),
                     'Top 20 by Final Quant Score': (['Ticker', 'Final Quant Score', 'Sector', 'Last Price', 'Relative P/E', 'Valuation (Graham)', 'Risk/Reward Ratio', 'Volatility (1Y)', '1-Year Momentum (12-1) (%)'], ['Ticker', 'Score', 'Sector', 'Price', 'Rel. P/E', 'Graham', 'R/R', 'Volatility', 'Momentum']),
@@ -568,8 +533,32 @@ def run_full_analysis(CONFIG):
                     ('ALTERNATINGBACKGROUND', (0, 1), (-1, -1), [colors.Color(0.9, 0.9, 0.9), colors.Color(0.98, 0.98, 0.98)])
                 ])
                 table.setStyle(table_style)
-                elements = [Paragraph(title, styles['h2']), Spacer(1, 0.1*inch), table, Spacer(1, 0.25*inch)]
+
+                # --- ⭐️ NEW: Add Summary Text ⭐️ ---
+                SUMMARY_DESCRIPTIONS = {
+                    'Top 10 by Market Cap (from SPUS)': "This table shows the 10 largest companies in the SPUS portfolio, sorted by their market capitalization.",
+                    'Top 20 by Final Quant Score': "This table ranks the top 20 stocks based on the combined 6-factor quantitative score (Value, Momentum, Quality, Size, Volatility, Technicals).",
+                    'Top Quant & High R-R (Ratio > 1)': "This table filters the top-ranked stocks to show only those with a favorable Risk/Reward Ratio (greater than 1).",
+                    'Top 10 Undervalued (Rel & Graham)': "This table highlights the top 10 stocks considered 'Undervalued' by either the Graham Number or relative sector P/E.",
+                    'New Bullish Crossovers (MACD)': "This table lists stocks that have just generated a 'Bullish Crossover' MACD signal, a positive momentum indicator.",
+                    'Stocks Currently Near Support': "This table identifies stocks whose current price is very close to their 90-day technical support level, a potential entry point."
+                }
+                
+                # Start elements list
+                elements = [Paragraph(title, styles['h2']), Spacer(1, 0.1*inch), table, Spacer(1, 0.1*inch)]
+                
+                summary_text = SUMMARY_DESCRIPTIONS.get(title)
+                
+                if summary_text:
+                    # Use a standard body text style
+                    summary_paragraph = Paragraph(summary_text, styles['BodyText'])
+                    elements.append(summary_paragraph)
+                    
+                elements.append(Spacer(1, 0.25*inch)) # Add the final spacer
+                # --- ⭐️ END NEW ⭐️ ---
+
                 return elements
+            # --- ⭐️⭐️⭐️ PDF SUMMARY LOGIC ENDS HERE ⭐️⭐️⭐️ ---
 
             elements.append(Paragraph(f"SPUS Analysis Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['h1']))
             elements.extend(create_pdf_table("Top 10 by Market Cap (from SPUS)", top_10_market_cap))
@@ -705,7 +694,6 @@ def main():
 
                 st.divider()
 
-                # Apply the (now upgraded) styling function
                 styled_df = apply_comprehensive_styling(df_to_show)
                 st.dataframe(styled_df, use_container_width=True)
 

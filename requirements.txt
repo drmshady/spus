@@ -4,4 +4,5 @@ yfinance
 pandas-ta
 openpyxl
 reportlab
+matplotlib
 requests

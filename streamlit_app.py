@@ -58,7 +58,7 @@ except ImportError:
     logging.warning("مكتبة 'reportlab' غير موجودة. لن يتم إنشاء تقارير PDF.")
 
 
-# --- ⭐️ 2. UPDATED: Custom CSS for Modern Minimal Theme ⭐️ ---
+# --- ⭐️ 2. NEW: Custom CSS for Modern Minimal Theme ⭐️ ---
 def load_css():
     """
     Injects custom CSS for a modern, minimal, card-based theme
@@ -145,14 +145,6 @@ def load_css():
         }}
 
         /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
-        
-        /* ⭐️ NEW: Container for scrollable list */
-        .ticker-list-container {{
-            height: 600px; /* Set height */
-            overflow-y: auto; /* Make scrollable */
-            padding-right: 10px; /* Space for scrollbar */
-        }}
-
         /* Target buttons ONLY inside our custom ticker list container */
         .ticker-list-container [data-testid="stButton"] button {{
             border: 1px solid var(--gray-800);
@@ -210,20 +202,11 @@ def load_css():
              display: flex;
              justify-content: space-between;
              align-items: center;
-             flex-wrap: nowrap; /* Prevent wrapping */
         }}
         
-        /* This targets the metric delta (the arrow) */
-        [data-testid="stMetricDelta"] {{
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-        }}
-
         [data-testid="stExpander"] summary {{
             display: flex;
             align-items: center;
-            flex-wrap: nowrap; /* Prevent wrapping */
         }}
         /* --- ⭐️ END FIX --- */
         
@@ -808,28 +791,32 @@ def main():
                 with col1:
                     st.subheader(f"Ticker List ({len(df_to_show)})")
                     
-                    # --- ⭐️ MODIFICATION: Remove st.container, use div directly ---
-                    st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True)
-                    for ticker in df_to_show.index:
+                    # --- Create a scrollable container for the list ---
+                    with st.container(height=600): # Make list scrollable
                         
-                        # Get score for the label
-                        score = df_to_show.loc[ticker, 'Final Quant Score']
-                        label = f"{ticker} (Score: {score:.3f})"
-                        
-                        # Set button type to 'primary' if selected
-                        is_selected = (st.session_state.selected_ticker == ticker)
-                        button_type = "primary" if is_selected else "secondary"
-                        
-                        st.button(
-                            label, 
-                            key=f"{sheet_name}_{ticker}", 
-                            on_click=set_ticker, 
-                            args=(ticker,), 
-                            use_container_width=True,
-                            type=button_type
-                        )
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    # --- ⭐️ END MODIFICATION ---
+                        # --- ⭐️⭐️⭐️ MODIFICATION START ⭐️⭐️⭐️ ---
+                        # We wrap the list in a div to scope the CSS
+                        st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True)
+                        for ticker in df_to_show.index:
+                            
+                            # Get score for the label
+                            score = df_to_show.loc[ticker, 'Final Quant Score']
+                            label = f"{ticker} (Score: {score:.3f})"
+                            
+                            # Set button type to 'primary' if selected
+                            is_selected = (st.session_state.selected_ticker == ticker)
+                            button_type = "primary" if is_selected else "secondary"
+                            
+                            st.button(
+                                label, 
+                                key=f"{sheet_name}_{ticker}", 
+                                on_click=set_ticker, 
+                                args=(ticker,), 
+                                use_container_width=True,
+                                type=button_type
+                            )
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        # --- ⭐️⭐️⭐️ MODIFICATION END ⭐️⭐️⭐️ ---
                     
                     st.divider()
                     csv = df_to_show.to_csv(index=True).encode('utf-8')
@@ -927,4 +914,3 @@ if __name__ == "__main__":
         layout="wide"
     )
     main()
-

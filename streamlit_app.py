@@ -177,14 +177,14 @@ def load_css():
 
        /* Primary button (SELECTED) */
         [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="primary"] {{
-            border-color: var(--primary);
-            background-color: var(--primary);
-            color: var(--primary-fg-color); /* ⭐️ FIX: Use Streamlit's auto-contrast color */
+            border-color: #D30000; /* ⭐️ CHANGED: Dark Red Border */
+            background-color: #D30000; /* ⭐️ CHANGED: Dark Red Background */
+            color: white; /* ⭐️ CHANGED: White text for contrast */
             font-weight: 600;
         }}
         [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="primary"]:hover {{
-            background-color: var(--primary-dark); /* A slightly darker shade on hover */
-            border-color: var(--primary-dark);
+            border-color: #A00000; /* ⭐️ ADDED: Darker red on hover */
+            background-color: #A00000; /* ⭐️ ADDED: Darker red on hover */
         }}
         /* --- ⭐️ END UPDATED CSS --- */
 

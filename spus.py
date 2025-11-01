@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-SPUS Quantitative Analyzer v13.1 (Bugfix)
+SPUS Quantitative Analyzer v13.2 (Cache-Healing Fix)
 
-- Fixed 12-1 Momentum by forcing initial history fetch to '2y'
-- Fixed 1Y Volatility calculation by adding .dropna()
+- Adds logic to automatically detect and discard stale/insufficient
+  cache files (e.g., 1y data) to force a 2y refetch.
+- This ensures Momentum and Volatility calculations have enough data.
 """
 
 import requests
@@ -22,7 +23,6 @@ import json
 import requests.exceptions
 import numpy as np # Import numpy for volatility calculation
 
-# --- ⭐️ NEW: Import finvizfinance ---
 try:
     from finvizfinance.group import finvizfinance_group
     FINVIZ_AVAILABLE = True
@@ -263,7 +263,6 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
 
 # --- ⭐️ UPDATED: Process Ticker Function ⭐️ ---
 def process_ticker(ticker):
-    # (Null return dictionary is unchanged)
     null_return = {
         'ticker': ticker, 'momentum_12_1': None, 'rsi': None, 'last_price': None,
         'support_resistance': None, 'trend': None, 'macd': None, 'signal_line': None,
@@ -300,6 +299,26 @@ def process_ticker(ticker):
             logging.warning(f"Error loading existing FEATHER data for {ticker}: {e}")
             existing_hist_df = pd.DataFrame()
 
+    # --- ⭐️⭐️⭐️ NEW CACHE-HEALING LOGIC ⭐️⭐️⭐️ ---
+    # This block checks if the loaded cache is sufficient.
+    # If it's too small (e.g., only 1y from an old run), it wipes it.
+    if not existing_hist_df.empty:
+        try:
+            first_date = existing_hist_df.index.min().date()
+            # Need at least 14 months for 12-1 momentum. 
+            # We'll check for 15 months (457 days) to be safe.
+            required_start_date = datetime.now().date() - timedelta(days=457) 
+            
+            if first_date > required_start_date:
+                logging.warning(f"[{ticker}] Cache data is too recent (Starts: {first_date}). Not enough history for 12-1 momentum. Forcing full 2y refetch.")
+                existing_hist_df = pd.DataFrame() # Wipe the loaded data
+                start_date = None # Force the 'else' block for fetching
+        except Exception as e:
+            logging.warning(f"[{ticker}] Error checking cache validity: {e}. Wiping for safety.")
+            existing_hist_df = pd.DataFrame()
+            start_date = None
+    # --- ⭐️⭐️⭐️ END NEW LOGIC ⭐️⭐️⭐️ ---
+
     new_hist = pd.DataFrame()
     ticker_obj = None
     fetch_success = False
@@ -315,16 +334,12 @@ def process_ticker(ticker):
             try:
                 ticker_obj = yf.Ticker(ticker)
                 if start_date:
+                    # Cache exists and is valid, fetch only new data
                     new_hist = ticker_obj.history(start=start_date.strftime('%Y-%m-%d'))
                 else:
-                    # --- ⭐️⭐️⭐️ BUG FIX #1 ⭐️⭐️⭐️ ---
-                    # Hardcode '2y' as the minimum initial fetch.
-                    # The 12-1 momentum calc needs 14 months of data.
-                    # This fails if the config period is "1y".
-                    # This ensures the calculation will always have enough data.
-                    logging.info(f"[{ticker}] No cache. Fetching initial '2y' history to ensure robust calcs.")
+                    # Cache was empty or invalid, fetch full 2y history
+                    logging.info(f"[{ticker}] No/invalid cache. Fetching initial '2y' history.")
                     new_hist = ticker_obj.history(period="2y")
-                    # --- ⭐️⭐️⭐️ END BUG FIX #1 ⭐️⭐️⭐️ ---
                 fetch_success = True
                 break
             except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout, TimeoutError) as e:
@@ -354,31 +369,31 @@ def process_ticker(ticker):
 
     hist = combined_hist
     
-    # --- ⭐️ UPDATED: 12-1 Momentum & Volatility Calcs ---
+    # --- Momentum & Volatility Calcs (Fixed) ---
     momentum_12_1 = None
     volatility_1y = None
     try:
         monthly_hist = hist['Close'].resample('ME').last()
         
-        # 1. 12-1 Momentum
-        if len(monthly_hist) >= 14: # Check remains, but fetch logic now supports it
+        if len(monthly_hist) >= 14:
             price_1m_ago = monthly_hist.iloc[-2]
             price_13m_ago = monthly_hist.iloc[-14]
             if price_13m_ago != 0:
                 momentum_12_1 = ((price_1m_ago - price_13m_ago) / price_13m_ago) * 100
-        
-        # 2. 1-Year Annualized Volatility
-        # --- ⭐️⭐️⭐️ BUG FIX #2 ⭐️⭐️⭐️ ---
-        daily_returns = hist['Close'].pct_change().dropna() # Add .dropna() here
-        # --- ⭐️⭐️⭐️ END BUG FIX #2 ⭐️⭐️⭐️ ---
+        else:
+             logging.warning(f"[{ticker}] Not enough monthly data for 12-1 momentum (Need 14, have {len(monthly_hist)}).")
+
+        daily_returns = hist['Close'].pct_change().dropna() # Bugfix was here
         
         if len(daily_returns) >= 252:
             returns_1y = daily_returns.iloc[-252:]
             volatility_1y = returns_1y.std() * np.sqrt(252)
+        else:
+            logging.warning(f"[{ticker}] Not enough daily data for 1y volatility (Need 252, have {len(daily_returns)}).")
         
     except Exception as e:
         logging.warning(f"[{ticker}] Error calculating 12-1 Momentum or Volatility: {e}")
-    # --- ⭐️ END UPDATED CALCULATIONS ---
+    # --- END CALCS ---
 
     rsi = None
     last_price = None

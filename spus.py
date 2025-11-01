@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-SPUS Quantitative Analyzer v14 (Self-Contained)
+SPUS Quantitative Analyzer v14 (No File Cache)
 
-- REMOVED finvizfinance dependency.
-- Sector averages will now be calculated in streamlit_app.py
-  based on the data from all tickers.
+- REMOVED all .feather and .json file I/O.
+- Caching is now handled entirely by @st.cache_data in streamlit_app.py.
+- This is a simpler and more robust solution.
 """
 
 import requests
@@ -127,29 +127,11 @@ def calculate_support_resistance(hist_df):
 def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
     """
     Calculates financials. Now *only* fetches yfinance data.
-    Sector comparison is now handled in streamlit_app.py.
     """
-    info = {}
-    cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
-    if not os.path.exists(cache_dir):
-        try:
-            os.makedirs(cache_dir)
-        except OSError as e:
-            logging.warning(f"Could not create cache directory {cache_dir}: {e}")
-    cache_path = os.path.join(cache_dir, f"{ticker}.json")
-    cache_duration_seconds = CONFIG['INFO_CACHE_DURATION_HOURS'] * 3600
-
     try:
-        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path) < cache_duration_seconds):
-            with open(cache_path, 'r') as f:
-                info = json.load(f)
-            logging.info(f"[{ticker}] Loaded fundamental data from cache.")
-        else:
-            logging.info(f"[{ticker}] Fetching fundamental data from network...")
-            info = ticker_obj.info
-            with open(cache_path, 'w') as f:
-                json.dump(info, f, indent=4)
-
+        # --- ⭐️ REMOVED all file caching. yfinance handles this in-session.
+        info = ticker_obj.info
+        
         pe_ratio = info.get('forwardPE', None)
         pb_ratio = info.get('priceToBook', None)
         div_yield = info.get('dividendYield', None)
@@ -177,8 +159,6 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
         elif eps is not None and eps <= 0:
             valuation_signal = "Unprofitable (EPS < 0)"
 
-        # --- ⭐️ REMOVED all finviz logic ---
-
         financial_dict = {
             'Forward P/E': pe_ratio,
             'P/B Ratio': pb_ratio,
@@ -194,13 +174,11 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             '52 Week Low': low_52wk,
             'Graham Number': graham_number,
             'Valuation (Graham)': valuation_signal,
-            # --- ⭐️ REMOVED finviz fields ---
         }
         return financial_dict
 
     except Exception as e:
         logging.error(f"Error fetching/processing fundamental data for {ticker}: {e}")
-        # Ensure all keys exist, even on failure
         default_keys = ['Forward P/E', 'P/B Ratio', 'Market Cap', 'Sector', 'Dividend Yield', 
                         'Debt/Equity', 'Revenue Growth (QoQ)', 'Graham Number', 'Valuation (Graham)', 
                         'Return on Equity (ROE)', 'EV/EBITDA', 'Price/Sales (P/S)', '52 Week High', '52 Week Low']
@@ -208,8 +186,12 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
 # --- ⭐️ END UPDATED FUNCTION ---
 
 
-# --- Process Ticker Function (v13.3 - Unchanged) ---
+# --- ⭐️ UPDATED: Process Ticker Function ⭐️ ---
 def process_ticker(ticker):
+    """
+    Simplified function. Fetches 2y history and info, calculates metrics, returns.
+    No file I/O.
+    """
     null_return = {
         'ticker': ticker, 'momentum_12_1': None, 'rsi': None, 'last_price': None,
         'support_resistance': None, 'trend': None, 'macd': None, 'signal_line': None,
@@ -217,82 +199,39 @@ def process_ticker(ticker):
         'recent_news': "N/A", 'latest_headline': "N/A", 'earnings_date': "N/A",
         'volatility_1y': None
     }
+
     if CONFIG is None:
-        logging.error(f"process_ticker ({ticker}): CONFIG is None. Cannot find cache paths.")
+        logging.error(f"process_ticker ({ticker}): CONFIG is None.")
         return null_return
-    hist_cache_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
-    if not os.path.exists(hist_cache_dir):
-        try:
-            os.makedirs(hist_cache_dir)
-        except OSError as e:
-            logging.warning(f"Could not create cache directory {hist_cache_dir}: {e}")
-    file_path = os.path.join(hist_cache_dir, f'{ticker}.feather')
-    existing_hist_df = pd.DataFrame()
-    start_date = None
-    MIN_DATA_ROWS = 300 
-    if os.path.exists(file_path):
-        try:
-            existing_hist_df = pd.read_feather(file_path)
-            if len(existing_hist_df) < MIN_DATA_ROWS:
-                logging.warning(f"[{ticker}] Cache file is too small ({len(existing_hist_df)} rows, need {MIN_DATA_ROWS}). Wiping and forcing full 2y refetch.")
-                existing_hist_df = pd.DataFrame() 
-                start_date = None
-            else:
-                existing_hist_df['Date'] = pd.to_datetime(existing_hist_df['Date'])
-                existing_hist_df.set_index('Date', inplace=True)
-                if not existing_hist_df.empty:
-                    existing_hist_df.index = pd.to_datetime(existing_hist_df.index, utc=True)
-                    last_date = existing_hist_df.index.max()
-                    start_date = last_date + timedelta(days=1)
-        except Exception as e:
-            logging.warning(f"Error loading/validating FEATHER data for {ticker}: {e}. Wiping for safety.")
-            existing_hist_df = pd.DataFrame()
-            start_date = None
-    new_hist = pd.DataFrame()
+
+    # --- ⭐️ REMOVED all .feather cache logic ---
+    
+    hist = pd.DataFrame()
     ticker_obj = None
-    fetch_success = False
-    today = datetime.now().date()
-    should_fetch = True
-    if start_date:
-        if start_date.date() > today:
-            logging.info(f"[{ticker}] History cache is already up-to-date (Last: {start_date.date() - timedelta(days=1)}). Skipping network fetch.")
-            should_fetch = False
-    if should_fetch:
-        for attempt in range(3):
-            try:
-                ticker_obj = yf.Ticker(ticker)
-                if start_date:
-                    new_hist = ticker_obj.history(start=start_date.strftime('%Y-%m-%d'))
-                else:
-                    logging.info(f"[{ticker}] No/invalid cache. Fetching initial '2y' history.")
-                    new_hist = ticker_obj.history(period="2y")
-                fetch_success = True
-                break
-            except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout, TimeoutError) as e:
-                logging.warning(f"[{ticker}] Network error on attempt {attempt+1}/3: {e}. Retrying in {5*(attempt+1)}s...")
-                time.sleep(5 * (attempt+1))
-            except Exception as e:
-                logging.error(f"Error fetching new history for {ticker}: {e}")
-                break
-    if not fetch_success and existing_hist_df.empty:
-        logging.error(f"[{ticker}] Failed to fetch history and no cache exists.")
+    
+    try:
+        ticker_obj = yf.Ticker(ticker)
+        # Always fetch 2y of data. This is the core fix.
+        hist = ticker_obj.history(period="2y")
+        if hist.empty:
+             logging.warning(f"[{ticker}] No history data found (possibly delisted).")
+             return null_return
+    except Exception as e:
+        logging.error(f"Error fetching new history for {ticker}: {e}")
         return null_return
-    if not new_hist.empty:
-        combined_hist = pd.concat([existing_hist_df, new_hist]).drop_duplicates(keep='last').sort_index()
-    else:
-        combined_hist = existing_hist_df
-    if combined_hist.empty:
-        logging.warning(f"[{ticker}] No history data found (possibly delisted).")
-        return null_return
-    if not combined_hist.index.is_unique:
-         duplicate_dates = combined_hist.index[combined_hist.index.duplicated(keep='first')]
+        
+    # (Data cleanup - Unchanged)
+    if not hist.index.is_unique:
+         duplicate_dates = hist.index[hist.index.duplicated(keep='first')]
          logging.warning(f"Removed duplicate dates for {ticker} before calculating TA: {duplicate_dates.tolist()}")
-         combined_hist = combined_hist[~combined_hist.index.duplicated(keep='first')]
-    hist = combined_hist
+         hist = hist[~hist.index.duplicated(keep='first')]
+
+    # --- Momentum & Volatility Calcs (Unchanged) ---
     momentum_12_1 = None
     volatility_1y = None
     try:
         monthly_hist = hist['Close'].resample('ME').last()
+        
         if len(monthly_hist) >= 14:
             price_1m_ago = monthly_hist.iloc[-2]
             price_13m_ago = monthly_hist.iloc[-14]
@@ -300,18 +239,24 @@ def process_ticker(ticker):
                 momentum_12_1 = ((price_1m_ago - price_13m_ago) / price_13m_ago) * 100
         else:
              logging.warning(f"[{ticker}] Not enough monthly data for 12-1 momentum (Need 14, have {len(monthly_hist)}).")
+
         daily_returns = hist['Close'].pct_change().dropna() 
+        
         if len(daily_returns) >= 252:
             returns_1y = daily_returns.iloc[-252:]
             volatility_1y = returns_1y.std() * np.sqrt(252)
         else:
             logging.warning(f"[{ticker}] Not enough daily data for 1y volatility (Need 252, have {len(daily_returns)}).")
+        
     except Exception as e:
         logging.warning(f"[{ticker}] Error calculating 12-1 Momentum or Volatility: {e}")
+    # --- END CALCS ---
+
     rsi = None
     last_price = None
     support_resistance = None
     trend = 'Insufficient data for trend'
+
     try:
         hist.ta.rsi(length=CONFIG['RSI_WINDOW'], append=True)
         hist.ta.sma(length=CONFIG['SHORT_MA_WINDOW'], append=True)
@@ -320,12 +265,14 @@ def process_ticker(ticker):
     except Exception as e:
         logging.warning(f"Error calculating TA for {ticker}: {e}. Skipping TA.")
         pass
+
     rsi_col = f'RSI_{CONFIG["RSI_WINDOW"]}'
     short_ma_col = f'SMA_{CONFIG["SHORT_MA_WINDOW"]}'
     long_ma_col = f'SMA_{CONFIG["LONG_MA_WINDOW"]}'
     macd_col = f'MACD_{CONFIG["MACD_SHORT_SPAN"]}_{CONFIG["MACD_LONG_SPAN"]}_{CONFIG["MACD_SIGNAL_SPAN"]}'
     macd_h_col = f'MACDh_{CONFIG["MACD_SHORT_SPAN"]}_{CONFIG["MACD_LONG_SPAN"]}_{CONFIG["MACD_SIGNAL_SPAN"]}'
     macd_s_col = f'MACDs_{CONFIG["MACD_SHORT_SPAN"]}_{CONFIG["MACD_LONG_SPAN"]}_{CONFIG["MACD_SIGNAL_SPAN"]}'
+
     if not hist.empty:
         last_price = hist['Close'].iloc[-1]
         rsi = hist[rsi_col].iloc[-1] if rsi_col in hist.columns else None
@@ -334,6 +281,7 @@ def process_ticker(ticker):
         macd = hist[macd_col].iloc[-1] if macd_col in hist.columns else None
         hist_val = hist[macd_h_col].iloc[-1] if macd_h_col in hist.columns else None
         signal_line = hist[macd_s_col].iloc[-1] if macd_s_col in hist.columns else None
+
         trend = 'No Clear Trend'
         if not pd.isna(last_short_ma) and not pd.isna(last_long_ma) and not pd.isna(last_price):
             if last_short_ma > last_long_ma:
@@ -346,6 +294,7 @@ def process_ticker(ticker):
                     trend = 'Confirmed Downtrend'
                 else:
                     trend = 'Downtrend (Rebound)'
+
         macd_signal = "N/A"
         if macd_h_col in hist.columns and len(hist) >= 2 and not pd.isna(hist_val):
             prev_hist = hist[macd_h_col].iloc[-2]
@@ -358,9 +307,11 @@ def process_ticker(ticker):
                     macd_signal = "Bullish (Favorable)"
                 elif hist_val < 0:
                     macd_signal = "Bearish (Unfavorable)"
+
         support, support_date, resistance, resistance_date, fib_61_8, fib_161_8 = calculate_support_resistance(hist)
         support_date_str = support_date.strftime('%Y-%m-%d') if pd.notna(support_date) else "N/A"
         resistance_date_str = resistance_date.strftime('%Y-%m-%d') if pd.notna(resistance_date) else "N/A"
+
         if support is not None and resistance is not None:
             support_resistance = {
                 'Support': support,
@@ -370,9 +321,9 @@ def process_ticker(ticker):
                 'Fib_61_8': fib_61_8,
                 'Fib_161_8': fib_161_8
             }
-        if ticker_obj is None:
-            ticker_obj = yf.Ticker(ticker)
+
         financial_dict = calculate_financials_and_fair_price(ticker_obj, last_price, ticker)
+
         recent_news_flag = "No"
         latest_headline = "N/A"
         earnings_date = "N/A"
@@ -397,11 +348,9 @@ def process_ticker(ticker):
                     earnings_date = str(date_val)
         except Exception as e:
             logging.warning(f"[{ticker}] Error fetching news or calendar: {e}")
-        try:
-            if not new_hist.empty or not os.path.exists(file_path):
-                 combined_hist.reset_index().to_feather(file_path)
-        except Exception as e:
-            logging.error(f"[{ticker}] Failed to save Feather cache: {e}")
+
+        # --- ⭐️ REMOVED .to_feather() save ---
+
         return {
             'ticker': ticker,
             'momentum_12_1': momentum_12_1,
@@ -420,5 +369,6 @@ def process_ticker(ticker):
             'earnings_date': earnings_date,
             'success': True
         }
+
     return null_return
-# --- END OF FILE ---
+# --- ⭐️ END UPDATED FUNCTION ---

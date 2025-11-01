@@ -12,7 +12,7 @@ import streamlit.components.v1 as components # Import components
 # This must be the first Streamlit command.
 st.set_page_config(
     page_title="SPUS Quant Analyzer",
-    page_icon="httpsSP://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", # Favicon
+    page_icon="https://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", # <-- ⭐️ FIX 1
     layout="wide"
 )
 
@@ -147,9 +147,11 @@ def load_css():
 
         /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
         
-        /* ⭐️ REMOVED height and overflow from this div */
+        /* ⭐️ NEW: Container for scrollable list */
         .ticker-list-container {{
-            padding-right: 5px; /* Space for scrollbar */
+            height: 600px; /* Set height */
+            overflow-y: auto; /* Make scrollable */
+            padding-right: 10px; /* Space for scrollbar */
         }}
 
         /* Target buttons ONLY inside our custom ticker list container */
@@ -967,6 +969,4 @@ if __name__ == "__main__":
         layout="wide"
     )
     main()
-
-"
 

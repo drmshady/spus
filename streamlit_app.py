@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 import sys
 import glob
+import numpy as np # <-- Make sure numpy is imported
 
 # --- إصلاح مسار الاستيراد (Import Path Fix) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,7 @@ try:
         process_ticker,
         calculate_support_resistance,
         calculate_financials_and_fair_price,
-        get_sector_valuation_averages
+        # --- ⭐️ REMOVED get_sector_valuation_averages ---
     )
 except ImportError as e:
     st.error("خطأ: فشل استيراد 'spus.py'.")
@@ -180,7 +181,7 @@ def clear_cache_files(CONFIG):
                 errors += 1
     return deleted_count, errors
 
-# --- دالة تشغيل التحليل (Unchanged) ---
+# --- ⭐️ UPDATED: دالة تشغيل التحليل ⭐️ ---
 def run_full_analysis(CONFIG):
     progress_bar = st.progress(0, text="Starting analysis...")
     status_text = st.empty()
@@ -208,13 +209,9 @@ def run_full_analysis(CONFIG):
     if not os.path.exists(historical_data_dir): os.makedirs(historical_data_dir)
     info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if not os.path.exists(info_cache_dir): os.makedirs(info_cache_dir)
-    if CONFIG.get('PREFETCH_SECTOR_DATA', True):
-        status_text.info("... (Pre-fetch) جارٍ جلب بيانات القطاعات (Sectors)...")
-        try:
-            get_sector_valuation_averages("Technology") 
-            status_text.info("... (Pre-fetch) اكتمل جلب بيانات القطاعات.")
-        except Exception as e:
-            status_text.warning(f"فشل جلب بيانات القطاعات مسبقاً: {e}")
+    
+    # --- ⭐️ REMOVED Pre-fetch (no longer needed) ---
+
     momentum_data = {}
     volatility_data = {} 
     rsi_data = {}
@@ -328,6 +325,8 @@ def run_full_analysis(CONFIG):
                     shares_to_buy_str = "N/A (Price below Support)"
         except Exception:
             pass
+        
+        # --- ⭐️ UPDATED Result Data (Removed finviz fields) ---
         result_data = {
             'Ticker': ticker,
             'Last Price': last_prices.get(ticker, pd.NA),
@@ -336,11 +335,7 @@ def run_full_analysis(CONFIG):
             'Valuation (Graham)': fin_info.get('Valuation (Graham)'),
             'Fair Price (Graham)': fin_info.get('Graham Number'),
             'Forward P/E': fin_info.get('Forward P/E'),
-            'Sector P/E': fin_info.get('Sector P/E'),
-            'Relative P/E': fin_info.get('Relative P/E'),
             'P/B Ratio': fin_info.get('P/B Ratio'),
-            'Sector P/B': fin_info.get('Sector P/B'),
-            'Relative P/B': fin_info.get('Relative P/B'),
             'MACD_Signal': macd_data.get(ticker, {}).get('Signal'),
             'Trend (50/200 Day MA)': trend_data.get(ticker, "N/A"),
             'Price vs. Levels': comparison_results.get(ticker, "N/A"),
@@ -359,7 +354,36 @@ def run_full_analysis(CONFIG):
             'Volatility (1Y)': volatility_data.get(ticker, pd.NA),
         }
         results_list.append(result_data)
+    
     results_df = pd.DataFrame(results_list)
+
+    # --- ⭐️ NEW: Self-Calculate Sector Medians ⭐️ ---
+    status_text.info("... (5/7) Calculating sector medians...")
+    results_df['Forward P/E'] = pd.to_numeric(results_df['Forward P/E'], errors='coerce')
+    results_df['P/B Ratio'] = pd.to_numeric(results_df['P/B Ratio'], errors='coerce')
+    
+    # Calculate medians (more robust than mean)
+    sector_pe_median = results_df.groupby('Sector')['Forward P/E'].median()
+    sector_pb_median = results_df.groupby('Sector')['P/B Ratio'].median()
+    
+    # Map medians back to the DataFrame
+    results_df['Sector P/E'] = results_df['Sector'].map(sector_pe_median)
+    results_df['Sector P/B'] = results_df['Sector'].map(sector_pb_median)
+    
+    # Define a helper for relative signals
+    def get_relative_signal(row_val, sector_val):
+        if pd.isna(row_val) or pd.isna(sector_val) or sector_val <= 0:
+            return "N/A"
+        if row_val < sector_val:
+            return "Undervalued (Sector)"
+        else:
+            return "Overvalued (Sector)"
+
+    results_df['Relative P/E'] = results_df.apply(lambda row: get_relative_signal(row['Forward P/E'], row['Sector P/E']), axis=1)
+    results_df['Relative P/B'] = results_df.apply(lambda row: get_relative_signal(row['P/B Ratio'], row['Sector P/B']), axis=1)
+    # --- ⭐️ END NEW ⭐️ ---
+
+    # --- 6-FACTOR MODEL LOGIC (Unchanged) ---
     FACTOR_WEIGHTS = {
         'VALUE': 0.25, 
         'MOMENTUM': 0.15, 
@@ -405,6 +429,8 @@ def run_full_analysis(CONFIG):
         (results_df['Z_Low_Volatility'] * FACTOR_WEIGHTS['LOW_VOL']) +
         (results_df['Z_Technical'] * FACTOR_WEIGHTS['TECHNICAL'])
     )
+    # --- END 6-FACTOR MODEL ---
+
     results_df['Risk/Reward Ratio'] = pd.to_numeric(results_df['Risk/Reward Ratio'], errors='coerce')
     results_df['Risk % (to Support)'] = pd.to_numeric(results_df['Risk % (to Support)'], errors='coerce')
     results_df['Final Quant Score'] = pd.to_numeric(results_df['Final Quant Score'], errors='coerce')
@@ -419,6 +445,7 @@ def run_full_analysis(CONFIG):
     new_crossovers = results_df[results_df['MACD_Signal'] == 'Bullish Crossover (Favorable)'].sort_values(by='Final Quant Score', ascending=False).head(10)
     near_support = results_df[results_df['Price vs. Levels'] == 'Near Support'].sort_values(by='Final Quant Score', ascending=False).head(10)
     top_quant_high_rr = top_20_quant[pd.to_numeric(top_20_quant['Risk/Reward Ratio'], errors='coerce') > 1].sort_values(by='Risk/Reward Ratio', ascending=False)
+    
     excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
@@ -525,7 +552,7 @@ def run_full_analysis(CONFIG):
     status_text.success("اكتمل التحليل بنجاح!")
     return True
 
-# --- ⭐️ UPDATED: واجهة مستخدم Streamlit الرئيسية ⭐️ ---
+# --- واجهة مستخدم Streamlit الرئيسية (Unchanged) ---
 def main():
     st.set_page_config(page_title="SPUS Quantitative Analysis", layout="wide")
     st.title("SPUS Quantitative Analysis Dashboard")
@@ -560,7 +587,6 @@ def main():
         st.header("Cache Management (إدارة التخزين المؤقت)")
         st.warning("إذا كانت الأعمدة فارغة (سوداء)، اضغط هذا الزر أولاً ثم أعد التحليل.")
         
-        # --- ⭐️⭐️⭐️ FIX: Removed invalid 'type' argument ⭐️⭐️⭐️ ---
         if st.button("Clear All Cached Data (مسح ذاكرة التخزين المؤقت)"):
             with st.spinner("Deleting cache files..."):
                 try:
@@ -571,7 +597,6 @@ def main():
                     st.info("Please 'Run Full Analysis' again to rebuild the cache.")
                 except Exception as e:
                     st.error(f"An error occurred while clearing cache: {e}")
-        # --- ⭐️⭐️⭐️ END FIX ⭐️⭐️⭐️ ---
 
         st.divider()
 
@@ -598,7 +623,7 @@ def main():
                     mime="application/pdf",
                 )
         else:
-            st.info("لم يتم العثور على تقرير PDF. سيتم إنشاؤه بعد تشغيل التحليل.")
+            st.info("لم يتم العтa العثور على تقرير PDF. سيتم إنشاؤه بعد تشغيل التحليل.")
         
         st.divider()
         

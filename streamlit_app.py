@@ -155,13 +155,11 @@ def calculate_robust_zscore(series):
     z_score = (series - median) / (1.4826 * mad)
     return z_score
 
-# --- ⭐️ NEW: Cache Clearing Function ⭐️ ---
+# --- Cache Clearing Function (Unchanged) ---
 def clear_cache_files(CONFIG):
     """Deletes all .feather and .json files from cache directories."""
     deleted_count = 0
     errors = 0
-    
-    # 1. Clear .feather history cache
     hist_cache_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
     if os.path.exists(hist_cache_dir):
         for f in glob.glob(os.path.join(hist_cache_dir, "*.feather")):
@@ -171,8 +169,6 @@ def clear_cache_files(CONFIG):
             except Exception as e:
                 logging.error(f"Failed to delete {f}: {e}")
                 errors += 1
-    
-    # 2. Clear .json info cache (and sector cache)
     info_cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if os.path.exists(info_cache_dir):
         for f in glob.glob(os.path.join(info_cache_dir, "*.json")):
@@ -182,9 +178,7 @@ def clear_cache_files(CONFIG):
             except Exception as e:
                 logging.error(f"Failed to delete {f}: {e}")
                 errors += 1
-                
     return deleted_count, errors
-# --- ⭐️ END NEW ⭐️ ---
 
 # --- دالة تشغيل التحليل (Unchanged) ---
 def run_full_analysis(CONFIG):
@@ -562,11 +556,12 @@ def main():
                 else:
                     st.error("فشل التحليل. يرجى مراجعة اللوج (spus_analysis.log).")
         
-        # --- ⭐️⭐️⭐️ NEW: Cache Clear Button ⭐️⭐️⭐️ ---
         st.divider()
         st.header("Cache Management (إدارة التخزين المؤقت)")
         st.warning("إذا كانت الأعمدة فارغة (سوداء)، اضغط هذا الزر أولاً ثم أعد التحليل.")
-        if st.button("Clear All Cached Data (مسح ذاكرة التخزين المؤقت)", type="destructive"):
+        
+        # --- ⭐️⭐️⭐️ FIX: Removed invalid 'type' argument ⭐️⭐️⭐️ ---
+        if st.button("Clear All Cached Data (مسح ذاكرة التخزين المؤقت)"):
             with st.spinner("Deleting cache files..."):
                 try:
                     deleted_count, errors = clear_cache_files(CONFIG)
@@ -576,7 +571,7 @@ def main():
                     st.info("Please 'Run Full Analysis' again to rebuild the cache.")
                 except Exception as e:
                     st.error(f"An error occurred while clearing cache: {e}")
-        # --- ⭐️⭐️⭐️ END NEW ⭐️⭐️⭐️ ---
+        # --- ⭐️⭐️⭐️ END FIX ⭐️⭐️⭐️ ---
 
         st.divider()
 

@@ -855,7 +855,7 @@ def main():
                 # 2. Charts (if they exist for this tab)
                 chart_df = df_to_show.copy().reset_index()
                 
-                with st.container(border=True, height=None):
+                with st.container(border=True):
                     if sheet_name == 'Top 20 Final Quant Score':
                         st.subheader("Top 20 by Quant Score")
                         chart_df['Final Quant Score'] = pd.to_numeric(chart_df['Final Quant Score'], errors='coerce')
@@ -894,3 +894,4 @@ if __name__ == "__main__":
         layout="wide"
     )
     main()
+

@@ -175,11 +175,11 @@ def load_css():
             border-color: var(--primary);
         }}
 
-        /* Primary button (SELECTED) */
+       /* Primary button (SELECTED) */
         [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="primary"] {{
             border-color: var(--primary);
             background-color: var(--primary);
-            color: white; /* White text on primary color */
+            color: var(--primary-fg-color); /* ⭐️ FIX: Use Streamlit's auto-contrast color */
             font-weight: 600;
         }}
         [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="primary"]:hover {{

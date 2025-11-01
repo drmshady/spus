@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-SPUS Quantitative Analyzer v13.2 (Cache-Healing Fix)
+SPUS Quantitative Analyzer v13.3 (Row Count Cache Fix)
 
-- Adds logic to automatically detect and discard stale/insufficient
-  cache files (e.g., 1y data) to force a 2y refetch.
-- This ensures Momentum and Volatility calculations have enough data.
+- Replaces complex date-based cache healing with a simple row count.
+- If a cache file has < 300 rows, it's deleted and re-fetched as 2y.
+- This is a more robust and direct fix for the blank columns.
 """
 
 import requests
@@ -201,8 +201,8 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
         roe = info.get('returnOnEquity', None)
         ev_ebitda = info.get('enterpriseToEbitda', None)
         ps_ratio = info.get('priceToSalesTrailing12Months', None)
-        high_52wk = info.get('fiftyTwoWeekHigh', None)
-        low_52wk = info.get('fiftyTwoWeekLow', None)
+        high_52_wk = info.get('fiftyTwoWeekHigh', None)
+        low_52_wk = info.get('fiftyTwoWeekLow', None)
         market_cap = info.get('marketCap', None)
         sector = info.get('sector', 'N/A')
         eps = info.get('trailingEps', None)
@@ -243,8 +243,8 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             'Return on Equity (ROE)': roe * 100 if roe else None,
             'EV/EBITDA': ev_ebitda,
             'Price/Sales (P/S)': ps_ratio,
-            '52 Week High': high_52wk,
-            '52 Week Low': low_52wk,
+            '52 Week High': high_52_wk,
+            '52 Week Low': low_52_wk,
             'Graham Number': graham_number,
             'Valuation (Graham)': valuation_signal,
             'Sector P/E': sector_pe_avg,
@@ -285,36 +285,32 @@ def process_ticker(ticker):
 
     existing_hist_df = pd.DataFrame()
     start_date = None
+    
+    # --- ⭐️⭐️⭐️ NEW CACHE-HEALING LOGIC (Row-based) ⭐️⭐️⭐️ ---
+    # We need ~300 trading days for 14 months of data (for 12-1 momentum)
+    # We need 252 trading days for 1y volatility.
+    MIN_DATA_ROWS = 300 
 
     if os.path.exists(file_path):
         try:
             existing_hist_df = pd.read_feather(file_path)
-            existing_hist_df['Date'] = pd.to_datetime(existing_hist_df['Date'])
-            existing_hist_df.set_index('Date', inplace=True)
-            if not existing_hist_df.empty:
-                existing_hist_df.index = pd.to_datetime(existing_hist_df.index, utc=True)
-                last_date = existing_hist_df.index.max()
-                start_date = last_date + timedelta(days=1)
-        except Exception as e:
-            logging.warning(f"Error loading existing FEATHER data for {ticker}: {e}")
-            existing_hist_df = pd.DataFrame()
-
-    # --- ⭐️⭐️⭐️ NEW CACHE-HEALING LOGIC ⭐️⭐️⭐️ ---
-    # This block checks if the loaded cache is sufficient.
-    # If it's too small (e.g., only 1y from an old run), it wipes it.
-    if not existing_hist_df.empty:
-        try:
-            first_date = existing_hist_df.index.min().date()
-            # Need at least 14 months for 12-1 momentum. 
-            # We'll check for 15 months (457 days) to be safe.
-            required_start_date = datetime.now().date() - timedelta(days=457) 
             
-            if first_date > required_start_date:
-                logging.warning(f"[{ticker}] Cache data is too recent (Starts: {first_date}). Not enough history for 12-1 momentum. Forcing full 2y refetch.")
-                existing_hist_df = pd.DataFrame() # Wipe the loaded data
-                start_date = None # Force the 'else' block for fetching
+            if len(existing_hist_df) < MIN_DATA_ROWS:
+                # If the file is too small, it's from an old run.
+                logging.warning(f"[{ticker}] Cache file is too small ({len(existing_hist_df)} rows, need {MIN_DATA_ROWS}). Wiping and forcing full 2y refetch.")
+                existing_hist_df = pd.DataFrame() # Wipe
+                start_date = None # Force re-fetch
+            else:
+                # Cache is valid and large enough
+                existing_hist_df['Date'] = pd.to_datetime(existing_hist_df['Date'])
+                existing_hist_df.set_index('Date', inplace=True)
+                if not existing_hist_df.empty:
+                    existing_hist_df.index = pd.to_datetime(existing_hist_df.index, utc=True)
+                    last_date = existing_hist_df.index.max()
+                    start_date = last_date + timedelta(days=1)
+                    
         except Exception as e:
-            logging.warning(f"[{ticker}] Error checking cache validity: {e}. Wiping for safety.")
+            logging.warning(f"Error loading/validating FEATHER data for {ticker}: {e}. Wiping for safety.")
             existing_hist_df = pd.DataFrame()
             start_date = None
     # --- ⭐️⭐️⭐️ END NEW LOGIC ⭐️⭐️⭐️ ---
@@ -383,7 +379,7 @@ def process_ticker(ticker):
         else:
              logging.warning(f"[{ticker}] Not enough monthly data for 12-1 momentum (Need 14, have {len(monthly_hist)}).")
 
-        daily_returns = hist['Close'].pct_change().dropna() # Bugfix was here
+        daily_returns = hist['Close'].pct_change().dropna() 
         
         if len(daily_returns) >= 252:
             returns_1y = daily_returns.iloc[-252:]
@@ -457,7 +453,7 @@ def process_ticker(ticker):
         # (Support/Resistance logic - Unchanged)
         support, support_date, resistance, resistance_date, fib_61_8, fib_161_8 = calculate_support_resistance(hist)
         support_date_str = support_date.strftime('%Y-%m-%d') if pd.notna(support_date) else "N/A"
-        resistance_date_str = resistance_date.strftime('%Y-%m-%d') if pd.notna(resistance_date) else "N/A"
+        resistance_date_str = resistance_date.strftime('%Y-%m-%d') if pd.notna(support_date) else "N/A"
         if support is not None and resistance is not None:
             support_resistance = {
                 'Support': support,
@@ -501,8 +497,9 @@ def process_ticker(ticker):
 
         # (Save to feather cache - Unchanged)
         try:
-            if not new_hist.empty:
-                combined_hist.reset_index().to_feather(file_path)
+            # We save the full 2y+ history, ensuring this file is valid for next time
+            if not new_hist.empty or not os.path.exists(file_path):
+                 combined_hist.reset_index().to_feather(file_path)
         except Exception as e:
             logging.error(f"[{ticker}] Failed to save Feather cache: {e}")
 

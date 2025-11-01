@@ -6,6 +6,7 @@ from datetime import datetime
 import sys
 import glob
 import numpy as np # Import numpy
+import streamlit.components.v1 as components # Import components
 
 # --- ⭐️ 1. Set Page Configuration FIRST ⭐️ ---
 # This must be the first Streamlit command.
@@ -58,7 +59,7 @@ except ImportError:
     logging.warning("مكتبة 'reportlab' غير موجودة. لن يتم إنشاء تقارير PDF.")
 
 
-# --- ⭐️ 2. NEW: Custom CSS for Modern Minimal Theme ⭐️ ---
+# --- ⭐️ 2. UPDATED: Custom CSS for Modern Minimal Theme ⭐️ ---
 def load_css():
     """
     Injects custom CSS for a modern, minimal, card-based theme
@@ -145,6 +146,14 @@ def load_css():
         }}
 
         /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
+        
+        /* ⭐️ NEW: Container for scrollable list */
+        .ticker-list-container {{
+            height: 600px; /* Set height */
+            overflow-y: auto; /* Make scrollable */
+            padding-right: 10px; /* Space for scrollbar */
+        }}
+
         /* Target buttons ONLY inside our custom ticker list container */
         .ticker-list-container [data-testid="stButton"] button {{
             border: 1px solid var(--gray-800);
@@ -202,11 +211,20 @@ def load_css():
              display: flex;
              justify-content: space-between;
              align-items: center;
+             flex-wrap: nowrap; /* Prevent wrapping */
         }}
         
+        /* This targets the metric delta (the arrow) */
+        [data-testid="stMetricDelta"] {{
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+        }}
+
         [data-testid="stExpander"] summary {{
             display: flex;
             align-items: center;
+            flex-wrap: nowrap; /* Prevent wrapping */
         }}
         /* --- ⭐️ END FIX --- */
         
@@ -672,6 +690,9 @@ def main():
     # --- ⭐️ NEW: Initialize Session State ---
     if 'selected_ticker' not in st.session_state:
         st.session_state.selected_ticker = None
+    # --- ⭐️ NEW: Add scroll flag ---
+    if 'scroll_to_detail' not in st.session_state:
+        st.session_state.scroll_to_detail = False
     # --- END NEW ---
 
     # --- ⭐️ Call CSS loader
@@ -701,6 +722,7 @@ def main():
             st.success("Cache cleared. Running fresh analysis...")
             # Reset selected ticker on full run
             st.session_state.selected_ticker = None
+            st.session_state.scroll_to_detail = False # Reset scroll flag
             st.rerun()
         
         st.divider()
@@ -776,6 +798,7 @@ def main():
         # --- ⭐️ NEW: Callback Function ---
         def set_ticker(ticker_symbol):
             st.session_state.selected_ticker = ticker_symbol
+            st.session_state.scroll_to_detail = True # <-- ⭐️ SET SCROLL FLAG
         # --- END NEW ---
 
         tabs = st.tabs(tab_titles)
@@ -791,32 +814,28 @@ def main():
                 with col1:
                     st.subheader(f"Ticker List ({len(df_to_show)})")
                     
-                    # --- Create a scrollable container for the list ---
-                    with st.container(height=600): # Make list scrollable
+                    # --- ⭐️ MODIFICATION: Remove st.container, use div directly ---
+                    st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True)
+                    for ticker in df_to_show.index:
                         
-                        # --- ⭐️⭐️⭐️ MODIFICATION START ⭐️⭐️⭐️ ---
-                        # We wrap the list in a div to scope the CSS
-                        st.markdown('<div class="ticker-list-container">', unsafe_allow_html=True)
-                        for ticker in df_to_show.index:
-                            
-                            # Get score for the label
-                            score = df_to_show.loc[ticker, 'Final Quant Score']
-                            label = f"{ticker} (Score: {score:.3f})"
-                            
-                            # Set button type to 'primary' if selected
-                            is_selected = (st.session_state.selected_ticker == ticker)
-                            button_type = "primary" if is_selected else "secondary"
-                            
-                            st.button(
-                                label, 
-                                key=f"{sheet_name}_{ticker}", 
-                                on_click=set_ticker, 
-                                args=(ticker,), 
-                                use_container_width=True,
-                                type=button_type
-                            )
-                        st.markdown('</div>', unsafe_allow_html=True)
-                        # --- ⭐️⭐️⭐️ MODIFICATION END ⭐️⭐️⭐️ ---
+                        # Get score for the label
+                        score = df_to_show.loc[ticker, 'Final Quant Score']
+                        label = f"{ticker} (Score: {score:.3f})"
+                        
+                        # Set button type to 'primary' if selected
+                        is_selected = (st.session_state.selected_ticker == ticker)
+                        button_type = "primary" if is_selected else "secondary"
+                        
+                        st.button(
+                            label, 
+                            key=f"{sheet_name}_{ticker}", 
+                            on_click=set_ticker, 
+                            args=(ticker,), 
+                            use_container_width=True,
+                            type=button_type
+                        )
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    # --- ⭐️ END MODIFICATION ---
                     
                     st.divider()
                     csv = df_to_show.to_csv(index=True).encode('utf-8')
@@ -847,6 +866,9 @@ def main():
                             ticker_data = all_data.loc[selected_ticker]
                             
                             # --- ⭐️ Display Ticker Details ⭐️ ---
+                            
+                            # --- ⭐️ NEW: Add Anchor Point ---
+                            st.markdown('<a id="detail-view-anchor"></a>', unsafe_allow_html=True)
                             
                             # 1. Header
                             st.header(f"Details for: {selected_ticker}")
@@ -905,6 +927,29 @@ def main():
                 
                 # --- ⭐️⭐️⭐️ END NEW LAYOUT ⭐️⭐️⭐️ ---
 
+    # --- ⭐️ NEW: JavaScript injection for mobile scroll ---
+    if st.session_state.get('scroll_to_detail', False):
+        # This JS runs *after* the page re-renders
+        components.html(f"""
+        <script>
+            // We need to wait for Streamlit to finish rendering the columns
+            setTimeout(function() {{
+                // Only scroll if on a small screen (Streamlit's mobile breakpoint is 768px)
+                if (window.innerWidth < 768) {{
+                    var anchor = window.parent.document.getElementById('detail-view-anchor');
+                    if (anchor) {{
+                        // Scroll the anchor into view
+                        anchor.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                    }}
+                }}
+            }}, 300); // 300ms delay
+        </script>
+        """, height=0)
+        
+        # Reset the scroll flag so it doesn't run again on non-click reruns
+        st.session_state.scroll_to_detail = False
+    # --- ⭐️ END NEW ---
+
 
 if __name__ == "__main__":
     # --- ⭐️ 0. Set Page Config (Must be first) ---
@@ -914,3 +959,4 @@ if __name__ == "__main__":
         layout="wide"
     )
     main()
+

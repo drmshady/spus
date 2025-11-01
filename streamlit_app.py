@@ -965,7 +965,7 @@ if __name__ == "__main__":
     # --- ⭐️ 0. Set Page Config (Must be first) ---
     st.set_page_config(
         page_title="SPUS Quant Analyzer",
-        page_icon="https://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png",
+        page_icon="https->//www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png",
         layout="wide"
     )
     main()

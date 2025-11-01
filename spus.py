@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-SPUS Quantitative Analyzer v13.3 (Row Count Cache Fix)
+SPUS Quantitative Analyzer v14 (Self-Contained)
 
-- Replaces complex date-based cache healing with a simple row count.
-- If a cache file has < 300 rows, it's deleted and re-fetched as 2y.
-- This is a more robust and direct fix for the blank columns.
+- REMOVED finvizfinance dependency.
+- Sector averages will now be calculated in streamlit_app.py
+  based on the data from all tickers.
 """
 
 import requests
@@ -21,14 +21,9 @@ from openpyxl.styles import Font
 import io
 import json
 import requests.exceptions
-import numpy as np # Import numpy for volatility calculation
+import numpy as np
 
-try:
-    from finvizfinance.group import finvizfinance_group
-    FINVIZ_AVAILABLE = True
-except ImportError:
-    FINVIZ_AVAILABLE = False
-    logging.warning("finvizfinance library not found. Sector valuation will be skipped.")
+# --- ⭐️ REMOVED finvizfinance ---
 
 # --- Define Base Directory ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,52 +48,8 @@ def load_config(path='config.json'):
 CONFIG = load_config('config.json')
 
 
-# --- Function to get Sector Averages (Unchanged) ---
-def get_sector_valuation_averages(sector):
-    if not FINVIZ_AVAILABLE or CONFIG is None:
-        return None, None
-    cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
-    if not os.path.exists(cache_dir):
-        try:
-            os.makedirs(cache_dir)
-        except OSError as e:
-            logging.warning(f"Could not create cache directory {cache_dir}: {e}")
-            return None, None
-    cache_path = os.path.join(cache_dir, "sector_valuation_cache.json")
-    cache_duration_seconds = CONFIG.get('SECTOR_CACHE_DURATION_HOURS', 24) * 3600
-    sector_data = {}
-    try:
-        if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path) < cache_duration_seconds):
-            with open(cache_path, 'r') as f:
-                sector_data = json.load(f)
-            logging.info("Loaded sector valuation data from cache.")
-        else:
-            logging.info("Fetching new sector valuation data from Finviz...")
-            f_group = finvizfinance_group()
-            df = f_group.screener_view(group_by='Sector', order_by='Name', view='Valuation')
-            df.set_index('Name', inplace=True)
-            sector_data = df.to_dict(orient='index')
-            with open(cache_path, 'w') as f:
-                json.dump(sector_data, f, indent=4)
-    except Exception as e:
-        logging.error(f"Error fetching/caching sector data from Finviz: {e}")
-        if os.path.exists(cache_path):
-            with open(cache_path, 'r') as f:
-                sector_data = json.load(f)
-            logging.warning("Using expired sector cache due to fetch error.")
-        else:
-            return None, None
-    if sector in sector_data:
-        try:
-            sector_pe = pd.to_numeric(sector_data[sector].get('P/E'), errors='coerce')
-            sector_pb = pd.to_numeric(sector_data[sector].get('P/B'), errors='coerce')
-            return sector_pe, sector_pb
-        except Exception as e:
-            logging.warning(f"Error parsing sector data for {sector}: {e}")
-            return None, None
-    else:
-        logging.warning(f"Sector '{sector}' not found in Finviz group data.")
-        return None, None
+# --- ⭐️ REMOVED get_sector_valuation_averages function ---
+
 
 # --- FETCHER FUNCTION (Unchanged) ---
 def fetch_spus_tickers():
@@ -172,8 +123,12 @@ def calculate_support_resistance(hist_df):
         resistance_date = hist_df['High'].idxmax()
         return support_val, support_date, resistance_val, resistance_date, None, None
 
-# --- Financials and Fair Price Function (Unchanged) ---
+# --- ⭐️ UPDATED: Financials and Fair Price Function ---
 def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
+    """
+    Calculates financials. Now *only* fetches yfinance data.
+    Sector comparison is now handled in streamlit_app.py.
+    """
     info = {}
     cache_dir = os.path.join(BASE_DIR, CONFIG['INFO_CACHE_DIR'])
     if not os.path.exists(cache_dir):
@@ -183,6 +138,7 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             logging.warning(f"Could not create cache directory {cache_dir}: {e}")
     cache_path = os.path.join(cache_dir, f"{ticker}.json")
     cache_duration_seconds = CONFIG['INFO_CACHE_DURATION_HOURS'] * 3600
+
     try:
         if os.path.exists(cache_path) and (time.time() - os.path.getmtime(cache_path) < cache_duration_seconds):
             with open(cache_path, 'r') as f:
@@ -193,6 +149,7 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             info = ticker_obj.info
             with open(cache_path, 'w') as f:
                 json.dump(info, f, indent=4)
+
         pe_ratio = info.get('forwardPE', None)
         pb_ratio = info.get('priceToBook', None)
         div_yield = info.get('dividendYield', None)
@@ -201,14 +158,15 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
         roe = info.get('returnOnEquity', None)
         ev_ebitda = info.get('enterpriseToEbitda', None)
         ps_ratio = info.get('priceToSalesTrailing12Months', None)
-        high_52_wk = info.get('fiftyTwoWeekHigh', None)
-        low_52_wk = info.get('fiftyTwoWeekLow', None)
+        high_52wk = info.get('fiftyTwoWeekHigh', None)
+        low_52wk = info.get('fiftyTwoWeekLow', None)
         market_cap = info.get('marketCap', None)
         sector = info.get('sector', 'N/A')
         eps = info.get('trailingEps', None)
         bvps = None
         graham_number = None
         valuation_signal = "N/A"
+
         if eps is not None and pb_ratio is not None and eps > 0 and pb_ratio > 0 and last_price is not None:
             bvps = last_price / pb_ratio
             graham_number = (22.5 * eps * bvps) ** 0.5
@@ -218,20 +176,9 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
                 valuation_signal = "Overvalued (Graham)"
         elif eps is not None and eps <= 0:
             valuation_signal = "Unprofitable (EPS < 0)"
-        sector_pe_avg, sector_pb_avg = None, None
-        relative_pe_signal, relative_pb_signal = "N/A", "N/A"
-        if sector != 'N/A' and FINVIZ_AVAILABLE:
-            sector_pe_avg, sector_pb_avg = get_sector_valuation_averages(sector)
-            if pe_ratio is not None and sector_pe_avg is not None and sector_pe_avg > 0:
-                if pe_ratio < sector_pe_avg:
-                    relative_pe_signal = "Undervalued (Sector)"
-                else:
-                    relative_pe_signal = "Overvalued (Sector)"
-            if pb_ratio is not None and sector_pb_avg is not None and sector_pb_avg > 0:
-                if pb_ratio < sector_pb_avg:
-                    relative_pb_signal = "Undervalued (Sector)"
-                else:
-                    relative_pb_signal = "Overvalued (Sector)"
+
+        # --- ⭐️ REMOVED all finviz logic ---
+
         financial_dict = {
             'Forward P/E': pe_ratio,
             'P/B Ratio': pb_ratio,
@@ -243,25 +190,25 @@ def calculate_financials_and_fair_price(ticker_obj, last_price, ticker):
             'Return on Equity (ROE)': roe * 100 if roe else None,
             'EV/EBITDA': ev_ebitda,
             'Price/Sales (P/S)': ps_ratio,
-            '52 Week High': high_52_wk,
-            '52 Week Low': low_52_wk,
+            '52 Week High': high_52wk,
+            '52 Week Low': low_52wk,
             'Graham Number': graham_number,
             'Valuation (Graham)': valuation_signal,
-            'Sector P/E': sector_pe_avg,
-            'Relative P/E': relative_pe_signal,
-            'Sector P/B': sector_pb_avg,
-            'Relative P/B': relative_pb_signal
+            # --- ⭐️ REMOVED finviz fields ---
         }
         return financial_dict
+
     except Exception as e:
         logging.error(f"Error fetching/processing fundamental data for {ticker}: {e}")
+        # Ensure all keys exist, even on failure
         default_keys = ['Forward P/E', 'P/B Ratio', 'Market Cap', 'Sector', 'Dividend Yield', 
                         'Debt/Equity', 'Revenue Growth (QoQ)', 'Graham Number', 'Valuation (Graham)', 
-                        'Return on Equity (ROE)', 'EV/EBITDA', 'Price/Sales (P/S)', '52 Week High', '52 Week Low',
-                        'Sector P/E', 'Relative P/E', 'Sector P/B', 'Relative P/B']
+                        'Return on Equity (ROE)', 'EV/EBITDA', 'Price/Sales (P/S)', '52 Week High', '52 Week Low']
         return {key: None for key in default_keys}
+# --- ⭐️ END UPDATED FUNCTION ---
 
-# --- ⭐️ UPDATED: Process Ticker Function ⭐️ ---
+
+# --- Process Ticker Function (v13.3 - Unchanged) ---
 def process_ticker(ticker):
     null_return = {
         'ticker': ticker, 'momentum_12_1': None, 'rsi': None, 'last_price': None,
@@ -270,11 +217,9 @@ def process_ticker(ticker):
         'recent_news': "N/A", 'latest_headline': "N/A", 'earnings_date': "N/A",
         'volatility_1y': None
     }
-
     if CONFIG is None:
         logging.error(f"process_ticker ({ticker}): CONFIG is None. Cannot find cache paths.")
         return null_return
-
     hist_cache_dir = os.path.join(BASE_DIR, CONFIG['HISTORICAL_DATA_DIR'])
     if not os.path.exists(hist_cache_dir):
         try:
@@ -282,39 +227,27 @@ def process_ticker(ticker):
         except OSError as e:
             logging.warning(f"Could not create cache directory {hist_cache_dir}: {e}")
     file_path = os.path.join(hist_cache_dir, f'{ticker}.feather')
-
     existing_hist_df = pd.DataFrame()
     start_date = None
-    
-    # --- ⭐️⭐️⭐️ NEW CACHE-HEALING LOGIC (Row-based) ⭐️⭐️⭐️ ---
-    # We need ~300 trading days for 14 months of data (for 12-1 momentum)
-    # We need 252 trading days for 1y volatility.
     MIN_DATA_ROWS = 300 
-
     if os.path.exists(file_path):
         try:
             existing_hist_df = pd.read_feather(file_path)
-            
             if len(existing_hist_df) < MIN_DATA_ROWS:
-                # If the file is too small, it's from an old run.
                 logging.warning(f"[{ticker}] Cache file is too small ({len(existing_hist_df)} rows, need {MIN_DATA_ROWS}). Wiping and forcing full 2y refetch.")
-                existing_hist_df = pd.DataFrame() # Wipe
-                start_date = None # Force re-fetch
+                existing_hist_df = pd.DataFrame() 
+                start_date = None
             else:
-                # Cache is valid and large enough
                 existing_hist_df['Date'] = pd.to_datetime(existing_hist_df['Date'])
                 existing_hist_df.set_index('Date', inplace=True)
                 if not existing_hist_df.empty:
                     existing_hist_df.index = pd.to_datetime(existing_hist_df.index, utc=True)
                     last_date = existing_hist_df.index.max()
                     start_date = last_date + timedelta(days=1)
-                    
         except Exception as e:
             logging.warning(f"Error loading/validating FEATHER data for {ticker}: {e}. Wiping for safety.")
             existing_hist_df = pd.DataFrame()
             start_date = None
-    # --- ⭐️⭐️⭐️ END NEW LOGIC ⭐️⭐️⭐️ ---
-
     new_hist = pd.DataFrame()
     ticker_obj = None
     fetch_success = False
@@ -324,16 +257,13 @@ def process_ticker(ticker):
         if start_date.date() > today:
             logging.info(f"[{ticker}] History cache is already up-to-date (Last: {start_date.date() - timedelta(days=1)}). Skipping network fetch.")
             should_fetch = False
-
     if should_fetch:
         for attempt in range(3):
             try:
                 ticker_obj = yf.Ticker(ticker)
                 if start_date:
-                    # Cache exists and is valid, fetch only new data
                     new_hist = ticker_obj.history(start=start_date.strftime('%Y-%m-%d'))
                 else:
-                    # Cache was empty or invalid, fetch full 2y history
                     logging.info(f"[{ticker}] No/invalid cache. Fetching initial '2y' history.")
                     new_hist = ticker_obj.history(period="2y")
                 fetch_success = True
@@ -344,33 +274,25 @@ def process_ticker(ticker):
             except Exception as e:
                 logging.error(f"Error fetching new history for {ticker}: {e}")
                 break
-
     if not fetch_success and existing_hist_df.empty:
         logging.error(f"[{ticker}] Failed to fetch history and no cache exists.")
         return null_return
-
     if not new_hist.empty:
         combined_hist = pd.concat([existing_hist_df, new_hist]).drop_duplicates(keep='last').sort_index()
     else:
         combined_hist = existing_hist_df
-
     if combined_hist.empty:
         logging.warning(f"[{ticker}] No history data found (possibly delisted).")
         return null_return
-
     if not combined_hist.index.is_unique:
          duplicate_dates = combined_hist.index[combined_hist.index.duplicated(keep='first')]
          logging.warning(f"Removed duplicate dates for {ticker} before calculating TA: {duplicate_dates.tolist()}")
          combined_hist = combined_hist[~combined_hist.index.duplicated(keep='first')]
-
     hist = combined_hist
-    
-    # --- Momentum & Volatility Calcs (Fixed) ---
     momentum_12_1 = None
     volatility_1y = None
     try:
         monthly_hist = hist['Close'].resample('ME').last()
-        
         if len(monthly_hist) >= 14:
             price_1m_ago = monthly_hist.iloc[-2]
             price_13m_ago = monthly_hist.iloc[-14]
@@ -378,25 +300,18 @@ def process_ticker(ticker):
                 momentum_12_1 = ((price_1m_ago - price_13m_ago) / price_13m_ago) * 100
         else:
              logging.warning(f"[{ticker}] Not enough monthly data for 12-1 momentum (Need 14, have {len(monthly_hist)}).")
-
         daily_returns = hist['Close'].pct_change().dropna() 
-        
         if len(daily_returns) >= 252:
             returns_1y = daily_returns.iloc[-252:]
             volatility_1y = returns_1y.std() * np.sqrt(252)
         else:
             logging.warning(f"[{ticker}] Not enough daily data for 1y volatility (Need 252, have {len(daily_returns)}).")
-        
     except Exception as e:
         logging.warning(f"[{ticker}] Error calculating 12-1 Momentum or Volatility: {e}")
-    # --- END CALCS ---
-
     rsi = None
     last_price = None
     support_resistance = None
     trend = 'Insufficient data for trend'
-
-    # (TA-Lib calculations - Unchanged)
     try:
         hist.ta.rsi(length=CONFIG['RSI_WINDOW'], append=True)
         hist.ta.sma(length=CONFIG['SHORT_MA_WINDOW'], append=True)
@@ -405,14 +320,12 @@ def process_ticker(ticker):
     except Exception as e:
         logging.warning(f"Error calculating TA for {ticker}: {e}. Skipping TA.")
         pass
-
     rsi_col = f'RSI_{CONFIG["RSI_WINDOW"]}'
     short_ma_col = f'SMA_{CONFIG["SHORT_MA_WINDOW"]}'
     long_ma_col = f'SMA_{CONFIG["LONG_MA_WINDOW"]}'
     macd_col = f'MACD_{CONFIG["MACD_SHORT_SPAN"]}_{CONFIG["MACD_LONG_SPAN"]}_{CONFIG["MACD_SIGNAL_SPAN"]}'
     macd_h_col = f'MACDh_{CONFIG["MACD_SHORT_SPAN"]}_{CONFIG["MACD_LONG_SPAN"]}_{CONFIG["MACD_SIGNAL_SPAN"]}'
     macd_s_col = f'MACDs_{CONFIG["MACD_SHORT_SPAN"]}_{CONFIG["MACD_LONG_SPAN"]}_{CONFIG["MACD_SIGNAL_SPAN"]}'
-
     if not hist.empty:
         last_price = hist['Close'].iloc[-1]
         rsi = hist[rsi_col].iloc[-1] if rsi_col in hist.columns else None
@@ -421,8 +334,6 @@ def process_ticker(ticker):
         macd = hist[macd_col].iloc[-1] if macd_col in hist.columns else None
         hist_val = hist[macd_h_col].iloc[-1] if macd_h_col in hist.columns else None
         signal_line = hist[macd_s_col].iloc[-1] if macd_s_col in hist.columns else None
-
-        # (Trend logic - Unchanged)
         trend = 'No Clear Trend'
         if not pd.isna(last_short_ma) and not pd.isna(last_long_ma) and not pd.isna(last_price):
             if last_short_ma > last_long_ma:
@@ -435,8 +346,6 @@ def process_ticker(ticker):
                     trend = 'Confirmed Downtrend'
                 else:
                     trend = 'Downtrend (Rebound)'
-
-        # (MACD Signal logic - Unchanged)
         macd_signal = "N/A"
         if macd_h_col in hist.columns and len(hist) >= 2 and not pd.isna(hist_val):
             prev_hist = hist[macd_h_col].iloc[-2]
@@ -449,11 +358,9 @@ def process_ticker(ticker):
                     macd_signal = "Bullish (Favorable)"
                 elif hist_val < 0:
                     macd_signal = "Bearish (Unfavorable)"
-
-        # (Support/Resistance logic - Unchanged)
         support, support_date, resistance, resistance_date, fib_61_8, fib_161_8 = calculate_support_resistance(hist)
         support_date_str = support_date.strftime('%Y-%m-%d') if pd.notna(support_date) else "N/A"
-        resistance_date_str = resistance_date.strftime('%Y-%m-%d') if pd.notna(support_date) else "N/A"
+        resistance_date_str = resistance_date.strftime('%Y-%m-%d') if pd.notna(resistance_date) else "N/A"
         if support is not None and resistance is not None:
             support_resistance = {
                 'Support': support,
@@ -463,13 +370,9 @@ def process_ticker(ticker):
                 'Fib_61_8': fib_61_8,
                 'Fib_161_8': fib_161_8
             }
-
         if ticker_obj is None:
             ticker_obj = yf.Ticker(ticker)
-
         financial_dict = calculate_financials_and_fair_price(ticker_obj, last_price, ticker)
-
-        # (News/Calendar logic - Unchanged)
         recent_news_flag = "No"
         latest_headline = "N/A"
         earnings_date = "N/A"
@@ -494,16 +397,11 @@ def process_ticker(ticker):
                     earnings_date = str(date_val)
         except Exception as e:
             logging.warning(f"[{ticker}] Error fetching news or calendar: {e}")
-
-        # (Save to feather cache - Unchanged)
         try:
-            # We save the full 2y+ history, ensuring this file is valid for next time
             if not new_hist.empty or not os.path.exists(file_path):
                  combined_hist.reset_index().to_feather(file_path)
         except Exception as e:
             logging.error(f"[{ticker}] Failed to save Feather cache: {e}")
-
-        # (Return dictionary - Updated)
         return {
             'ticker': ticker,
             'momentum_12_1': momentum_12_1,
@@ -522,6 +420,5 @@ def process_ticker(ticker):
             'earnings_date': earnings_date,
             'success': True
         }
-
     return null_return
-# --- ⭐️ END UPDATED FUNCTION ---
+# --- END OF FILE ---

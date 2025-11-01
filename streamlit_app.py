@@ -8,7 +8,7 @@ Original file is located at
 """
 
 # -*- coding: utf-8 -*-
-"""SPUS Quantitative Analyzer Dashboard – Clean Version"""
+"""SPUS Quantitative Analyzer Dashboard – Clean & Stable Version"""
 
 import streamlit as st
 import pandas as pd
@@ -33,7 +33,8 @@ try:
         fetch_spus_tickers,
         process_ticker,
         calculate_support_resistance,
-        calculate_financials_and_fair_price
+        calculate_financials_and_fair_price,
+        run_full_analysis  # ✅ imported from spus.py directly
     )
 except Exception as e:
     st.error(f"❌ Failed to import 'spus.py': {e}")
@@ -109,9 +110,9 @@ def main():
         st.image("https://www.sp-funds.com/wp-content/uploads/2022/02/SP-Funds-Logo-Primary-Wht-1.svg", width=180)
         st.header("⚙️ Controls")
 
+        # ✅ Fixed: no circular import
         if st.button("Run Full Analysis (تشغيل التحليل الكامل)", type="primary"):
             with st.spinner("Running full analysis... please wait ⏳"):
-                from streamlit_app import run_full_analysis  # imported dynamically
                 success = run_full_analysis(CONFIG)
                 if success:
                     st.cache_data.clear()
@@ -210,6 +211,7 @@ def main():
                 file_name=f"{sheet_name.replace(' ', '_')}.csv",
                 mime='text/csv',
             )
+
 
 if __name__ == "__main__":
     main()

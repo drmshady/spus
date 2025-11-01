@@ -182,22 +182,45 @@ def load_css():
             border-radius: 0 0 8px 8px;
         }}
 
-        /* --- ⭐️ Ticker List Button Styling --- */
-        [data-testid="stVerticalBlock"] [data-testid="stButton"] button {{
-            background-color: var(--background-color);
+        /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
+        /* Target buttons inside the first column of the main content area */
+        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button {{
             border: 1px solid var(--gray-800);
-            color: var(--text-color);
             font-weight: 500;
+            text-align: left; /* Align text left */
+            padding: 0.5rem 0.75rem; /* Add padding */
+            transition: all 0.1s ease-in-out;
+            border-radius: 8px; /* Match other elements */
+            margin-bottom: 4px; /* Add space between buttons */
         }}
-        [data-testid="stVerticalBlock"] [data-testid="stButton"] button:hover {{
+
+        /* Secondary button (non-selected) */
+        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="secondary"] {{
+            background-color: var(--secondary-background-color);
+            color: var(--text-color);
+        }}
+        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="secondary"]:hover {{
             border-color: var(--primary);
             color: var(--primary);
+            background-color: var(--secondary-background-color);
         }}
-        [data-testid="stVerticalBlock"] [data-testid="stButton"] button:focus {{
-            border-color: var(--primary);
-            color: var(--primary);
+        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="secondary"]:focus {{
             box-shadow: 0 0 0 2px var(--primary-light);
+            border-color: var(--primary);
         }}
+
+        /* Primary button (SELECTED) */
+        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="primary"] {{
+            border-color: var(--primary);
+            background-color: var(--primary);
+            color: white; /* White text on primary color */
+            font-weight: 600;
+        }}
+        .main [data-testid="stVerticalBlock"] [data-testid="stButton"] button[kind="primary"]:hover {{
+            background-color: var(--primary-dark); /* A slightly darker shade on hover */
+            border-color: var(--primary-dark);
+        }}
+        /* --- ⭐️ END UPDATED CSS --- */
 
         /* --- Metric & Detail Styling --- */
         [data-testid="stMetric"] {{
@@ -794,15 +817,27 @@ def main():
                     
                     # --- Create a scrollable container for the list ---
                     with st.container(height=600): # Make list scrollable
+                        
+                        # --- ⭐️⭐️⭐️ MODIFICATION START ⭐️⭐️⭐️ ---
                         for ticker in df_to_show.index:
-                            # Use a "secondary" type for a minimal look
+                            
+                            # Get score for the label
+                            score = df_to_show.loc[ticker, 'Final Quant Score']
+                            label = f"{ticker} (Score: {score:.3f})"
+                            
+                            # Set button type to 'primary' if selected
+                            is_selected = (st.session_state.selected_ticker == ticker)
+                            button_type = "primary" if is_selected else "secondary"
+                            
                             st.button(
-                                ticker, 
+                                label, 
                                 key=f"{sheet_name}_{ticker}", 
                                 on_click=set_ticker, 
                                 args=(ticker,), 
-                                use_container_width=True
+                                use_container_width=True,
+                                type=button_type
                             )
+                        # --- ⭐️⭐️⭐️ MODIFICATION END ⭐️⭐️⭐️ ---
                     
                     st.divider()
                     csv = df_to_show.to_csv(index=True).encode('utf-8')

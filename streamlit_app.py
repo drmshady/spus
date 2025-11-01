@@ -546,13 +546,13 @@ def main():
                 
 df_to_display = style_dataframe_text_only(df_to_show
 # Select relevant columns
-if set(relevant_columns).issubset(df_to_display.columns):
-    df_to_display = df_to_display[relevant_columns]
-else:
-    # Handle case where not all relevant_columns exist
-    cols_to_display = [col for col in relevant_columns if col in df_to_display.columns]
-    df_to_display = df_to_display[cols_to_display]
-    st.warning(f"Some specified relevant columns were not found in the dataframe. Displaying: {cols_to_display}")
+cols_to_display = [col for col in relevant_columns if col in df_to_display.columns]
+# Check if all relevant columns are in the dataframe before proceeding
+if not set(relevant_columns).issubset(df_to_display.columns):
+    missing_cols = set(relevant_columns) - set(df_to_display.columns)
+    st.warning(f"Some specified relevant columns were not found in the dataframe: {missing_cols}. Displaying available relevant columns: {cols_to_display}")
+
+df_to_display = df_to_display[cols_to_display]
 
 
 # Apply styling
@@ -572,32 +572,3 @@ st.dataframe(df_to_display.style.apply(lambda x: combined_styler(x, relevant_col
 
 if __name__ == "__main__":
     main()
-# --- Report Download Options (Added) ---
-st.sidebar.header("Download Report")
-
-# Assuming 'df_report' is the dataframe containing the data for the report
-# In a real app, ensure df_report is defined and holds the correct data
-
-# Add Excel download button
-excel_data = to_excel(df_to_display) # Using df_to_display as the report data for this example
-st.sidebar.download_button(
-    label="Download Excel Report",
-    data=excel_data,
-    file_name='report.xlsx',
-    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-)
-
-# Add PDF download button
-if reportlab_available:
-    pdf_data = to_pdf(df_to_display) # Using df_to_display as the report data for this example
-    if pdf_data:
-        st.sidebar.download_button(
-            label="Download PDF Report",
-            data=pdf_data,
-            file_name='report.pdf',
-            mime='application/pdf'
-        )
-else:
-    st.sidebar.warning("PDF generation library not found. PDF download is unavailable.")
-
-# --- End Report Download Options ---

@@ -147,15 +147,10 @@ def load_css():
 
         /* --- ⭐️ UPDATED: Ticker List Button Styling --- */
         
-        /* ⭐️ NEW: Container for scrollable list */
-        .ticker-list-container {{
-            height: 600px; /* Set height */
-            overflow-y: auto; /* Make scrollable */
-            padding-right: 10px; /* Space for scrollbar */
-        }}
+        /* ⭐️ REMOVED .ticker-list-container {{...}} */
 
-        /* Target buttons ONLY inside our custom ticker list container */
-        .ticker-list-container [data-testid="stButton"] button {{
+        /* Target buttons ONLY inside the first column's vertical block */
+        [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button {{
             border: 1px solid var(--gray-800);
             font-weight: 500;
             text-align: left; /* Align text left */
@@ -166,28 +161,28 @@ def load_css():
         }}
 
         /* Secondary button (non-selected) */
-        .ticker-list-container [data-testid="stButton"] button[kind="secondary"] {{
+        [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="secondary"] {{
             background-color: var(--secondary-background-color);
             color: var(--text-color);
         }}
-        .ticker-list-container [data-testid="stButton"] button[kind="secondary"]:hover {{
+        [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="secondary"]:hover {{
             border-color: var(--primary);
             color: var(--primary);
             background-color: var(--secondary-background-color);
         }}
-        .ticker-list-container [data-testid="stButton"] button[kind="secondary"]:focus {{
+        [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="secondary"]:focus {{
             box-shadow: 0 0 0 2px var(--primary-light);
             border-color: var(--primary);
         }}
 
         /* Primary button (SELECTED) */
-        .ticker-list-container [data-testid="stButton"] button[kind="primary"] {{
+        [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="primary"] {{
             border-color: var(--primary);
             background-color: var(--primary);
             color: white; /* White text on primary color */
             font-weight: 600;
         }}
-        .ticker-list-container [data-testid="stButton"] button[kind="primary"]:hover {{
+        [data-testid="stVerticalBlock"]:nth-child(1) [data-testid="stButton"] button[kind="primary"]:hover {{
             background-color: var(--primary-dark); /* A slightly darker shade on hover */
             border-color: var(--primary-dark);
         }}

@@ -72,30 +72,30 @@ def load_css():
 # ... (We will modify `run_full_analysis` instead) ...
 
 
-# --- ⭐️ REVISED: Robust Z-Score (Point 4: Small Sector) ⭐️ ---
-def calculate_robust_zscore_v2(group_series):
+# --- ⭐️ REVISED: Robust Z-Score (Point 4: No Global) ⭐️ ---
+def calculate_robust_zscore_v2(group_series, global_median=None, global_mad=None):
     """
     Calculates robust Z-score.
     Uses global median/mad if group is too small (< 5).
     """
     if len(group_series.dropna()) < 5:
-        # Use global stats (passed in via a trick)
-        median = global_stats[group_series.name]['median']
-        mad = global_stats[group_series.name]['mad']
+        # Use global stats passed as arguments
+        median = global_median
+        mad = global_mad
     else:
         # Use local group stats
         median = group_series.median()
         mad = (group_series - median).abs().median()
 
-    if mad == 0:
+    # Safety checks for invalid or missing stats
+    if mad is None or pd.isna(mad) or mad == 0:
         return 0
+    if median is None or pd.isna(median):
+         # Can't calculate z-score without a median
+         return 0
+         
     z_score = (group_series - median) / (1.4826 * mad)
     return z_score
-
-# --- ⭐️ NEW: Global Stats for Z-Score (Point 4) ---
-# This global var will be populated inside run_full_analysis
-global_stats = {}
-
 
 # --- ⭐️ REVISED: Main Analysis Function (Points 1, 2, 3, 4, 8, 9) ⭐️ ---
 @st.cache_data(show_spinner=False)
@@ -129,7 +129,7 @@ def run_full_analysis(CONFIG, factor_weights):
         
         return pd.DataFrame(processed_data)
 
-    # --- ⭐️ NEW: Modularize (Point 9) ---
+    # --- ⭐️ REVISED: Modularize (Point 9) ---
     def calculate_factors_and_scores(df, weights):
         """ Part 2: Calculate all Z-Scores and final Quant Score """
         
@@ -169,22 +169,25 @@ def run_full_analysis(CONFIG, factor_weights):
                 
                 # Winsorize: Clip top/bottom 5% of outliers
                 if df[col].dropna().empty: continue
+                # Fill NaNs with median before winsorizing to avoid errors
                 df[col] = winsorize(df[col].fillna(df[col].median()), limits=[0.05, 0.05])
         
         
-        # --- ⭐️ NEW: Global Stats for Small Sectors (Point 4) ---
-        global global_stats # Use the global var
-        global_stats.clear()
+        # --- ⭐️ REVISED: Local Stats for Small Sectors (Point 4) ---
+        # Create a *local* dictionary, not a global one
+        local_global_stats = {}
         for col in all_factor_cols:
             if col in df.columns:
-                global_stats[col] = {
+                local_global_stats[col] = {
                     'median': df[col].median(),
                     'mad': (df[col] - df[col].median()).abs().median()
                 }
+            else:
+                # Add a placeholder for safety, though it shouldn't be used
+                local_global_stats[col] = {'median': np.nan, 'mad': np.nan}
+
 
         # --- Calculate Z-Scores ---
-        # This will now use calculate_robust_zscore_v2
-        
         z_score_cols = []
         
         for factor_group, factor_list in FACTOR_MAP.items():
@@ -194,38 +197,49 @@ def run_full_analysis(CONFIG, factor_weights):
                     z_col_name = f"Z_{col}"
                     group_z_cols.append(z_col_name)
                     
-                    # Apply robust z-score (v2) by group
-                    df[z_col_name] = df.groupby('sector')[col].transform(calculate_robust_zscore_v2) * direction
+                    # Get the pre-calculated global stats for this column
+                    col_stats = local_global_stats[col]
+                    
+                    # --- ⭐️ THE FIX ⭐️ ---
+                    # Pass the stats as keyword arguments to transform
+                    df[z_col_name] = df.groupby('sector')[col].transform(
+                        calculate_robust_zscore_v2,
+                        global_median=col_stats['median'],
+                        global_mad=col_stats['mad']
+                    ) * direction
+                    
                     df[z_col_name] = df[z_col_name].fillna(0) # Fill NaNs with neutral 0
             
             # Combine Z-scores for the factor group (e.g., Z_Value)
-            df[f"Z_{factor_group}"] = df[group_z_cols].mean(axis=1)
-            z_score_cols.append(f"Z_{factor_group}")
+            if group_z_cols: # Only calculate if there are columns
+                df[f"Z_{factor_group}"] = df[group_z_cols].mean(axis=1)
+                z_score_cols.append(f"Z_{factor_group}")
+            else:
+                df[f"Z_{factor_group}"] = 0 # Set to 0 if no data
 
         # --- Final Quant Score (Point 7: Dynamic Weights) ---
         df['Final Quant Score'] = 0
         for factor_group, weight in weights.items():
-            df['Final Quant Score'] += df[f"Z_{factor_group}"] * weight
+            if f"Z_{factor_group}" in df.columns: # Check if factor was calculated
+                df['Final Quant Score'] += df[f"Z_{factor_group}"] * weight
         
         # --- ⭐️ REVISED: Risk/Reward (Point 3) ---
-        # Uses ATR-based S/L and T/P
         df['Risk_Pct_ATR'] = (df['last_price'] - df['Stop_Loss_ATR']) / df['last_price']
         df['Reward_Pct_ATR'] = (df['Take_Profit_ATR'] - df['last_price']) / df['last_price']
         
-        # Handle cases where risk is 0 or negative (price below stop)
         df['Risk/Reward Ratio'] = df['Reward_Pct_ATR'] / df['Risk_Pct_ATR']
         df['Risk/Reward Ratio'].replace([np.inf, -np.inf], np.nan, inplace=True)
-        df['Risk/Reward Ratio'] = df['Risk/Reward Ratio'].apply(lambda x: max(0, x)) # Cap at 0
+        # Cap at 0 (e.g., if risk is positive but reward is negative)
+        df['Risk/Reward Ratio'] = df['Risk/Reward Ratio'].apply(lambda x: max(0, x) if pd.notna(x) else np.nan) 
 
         # --- ⭐️ NEW: Position Sizing (Point 3) ---
-        # Assumes $100k portfolio, 1% risk per trade ($1000)
         account_risk = 1000 
         df['Risk_Per_Share_ATR'] = df['last_price'] - df['Stop_Loss_ATR']
         df['Position_Size_Shares'] = (account_risk / df['Risk_Per_Share_ATR']).replace([np.inf, -np.inf], 0)
-        # Cap position size at 10% of portfolio (Point 3)
+        
         max_position_dollars = 10000 
         df['Position_Size_Shares'] = df.apply(
-            lambda row: min(row['Position_Size_Shares'], max_position_dollars / row['last_price']) if row['last_price'] > 0 else 0,
+            lambda row: min(row['Position_Size_Shares'], max_position_dollars / row['last_price']) if pd.notna(row['last_price']) and row['last_price'] > 0 and pd.notna(row['Position_Size_Shares']) else 0,
             axis=1
         )
         
@@ -376,10 +390,13 @@ def main():
             # Normalize weights
             total_weight = sum(weights.values())
             if st.button("Normalize Weights to 1.0"):
-                for k in weights:
-                    weights[k] = weights[k] / total_weight
-                st.success(f"Weights normalized (Total: {sum(weights.values()):.2f})")
-                st.rerun() # Rerun to apply new weights
+                if total_weight > 0: # Avoid division by zero
+                    for k in weights:
+                        weights[k] = weights[k] / total_weight
+                    st.success(f"Weights normalized (Total: {sum(weights.values()):.2f})")
+                    st.rerun() # Rerun to apply new weights
+                else:
+                    st.warning("Total weight is 0. Cannot normalize.")
 
             st.info(f"**Current Total Weight:** {total_weight:.2f}")
 
@@ -491,7 +508,7 @@ def main():
                 # --- ⭐️ NEW: Add Filters (Point 7) ---
                 col_filter_1, col_filter_2 = st.columns([1, 2])
                 with col_filter_1:
-                    sectors = df_to_show['sector'].unique()
+                    sectors = sorted(df_to_show['sector'].unique())
                     selected_sectors = st.multiselect(
                         "Filter by Sector",
                         options=sectors,
@@ -602,34 +619,37 @@ def main():
                             try:
                                 hist = yf.Ticker(selected_ticker).history('1y')
                                 
-                                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                                                    vertical_spacing=0.03,
-                                                    row_heights=[0.7, 0.3])
-                                
-                                # Candlestick
-                                fig.add_trace(go.Candlestick(x=hist.index,
-                                                open=hist['Open'], high=hist['High'],
-                                                low=hist['Low'], close=hist['Close'],
-                                                name='Price'), row=1, col=1)
-                                
-                                # SMAs
-                                hist.ta.sma(length=50, append=True)
-                                hist.ta.sma(length=200, append=True)
-                                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA_50'], mode='lines', name='SMA 50'), row=1, col=1)
-                                fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA_200'], mode='lines', name='SMA 200'), row=1, col=1)
-                                
-                                # MACD
-                                hist.ta.macd(append=True)
-                                fig.add_trace(go.Scatter(x=hist.index, y=hist['MACD_12_26_9'], mode='lines', name='MACD'), row=2, col=1)
-                                fig.add_trace(go.Scatter(x=hist.index, y=hist['MACDs_12_26_9'], mode='lines', name='Signal'), row=2, col=1)
-                                fig.add_bar(x=hist.index, y=hist['MACDh_12_26_9'], name='Histogram', row=2, col=1)
-                                
-                                fig.update_layout(
-                                    title='1-Year Price Chart w/ Technicals',
-                                    xaxis_rangeslider_visible=False,
-                                    height=600
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
+                                if hist.empty:
+                                    st.warning("Could not download price history for chart.")
+                                else:
+                                    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                                                        vertical_spacing=0.03,
+                                                        row_heights=[0.7, 0.3])
+                                    
+                                    # Candlestick
+                                    fig.add_trace(go.Candlestick(x=hist.index,
+                                                    open=hist['Open'], high=hist['High'],
+                                                    low=hist['Low'], close=hist['Close'],
+                                                    name='Price'), row=1, col=1)
+                                    
+                                    # SMAs
+                                    hist.ta.sma(length=50, append=True)
+                                    hist.ta.sma(length=200, append=True)
+                                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA_50'], mode='lines', name='SMA 50'), row=1, col=1)
+                                    fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA_200'], mode='lines', name='SMA 200'), row=1, col=1)
+                                    
+                                    # MACD
+                                    hist.ta.macd(append=True)
+                                    fig.add_trace(go.Scatter(x=hist.index, y=hist['MACD_12_26_9'], mode='lines', name='MACD'), row=2, col=1)
+                                    fig.add_trace(go.Scatter(x=hist.index, y=hist['MACDs_12_26_9'], mode='lines', name='Signal'), row=2, col=1)
+                                    fig.add_bar(x=hist.index, y=hist['MACDh_12_26_9'], name='Histogram', row=2, col=1)
+                                    
+                                    fig.update_layout(
+                                        title='1-Year Price Chart w/ Technicals',
+                                        xaxis_rangeslider_visible=False,
+                                        height=600
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
                                 
                             except Exception as e:
                                 st.warning(f"Could not load chart: {e}")
@@ -646,7 +666,7 @@ def main():
                 if (window.innerWidth < 768) {{
                     var anchor = window.parent.document.getElementById('detail-view-anchor');
                     if (anchor) {{ anchor.scrollIntoView({{ behavior: 'smooth', block: 'start' }}); }}
-                }}
+                }
             }}, 300);
         </script>
         """, height=0)

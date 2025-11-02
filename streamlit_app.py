@@ -59,7 +59,7 @@ except ImportError:
     logging.warning("مكتبة 'reportlab' غير موجودة. لن يتم إنشاء تقارير PDF.")
 
 
-# --- ⭐️ 2. UPDATED: Custom CSS for Modern Minimal Theme ⭐️ ---
+# --- ⭐️ 2. UPDATED: Custom CSS for Modern Minimal Theme (WITH FIX) ⭐️ ---
 def load_css():
     """
     Injects custom CSS for a modern, minimal, card-based theme
@@ -70,10 +70,16 @@ def load_css():
         /* --- Import Google Font (Inter) --- */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+        /* --- ⭐️⭐️⭐️ CSS FIX HERE ⭐️⭐️⭐️ --- */
         /* --- Base Font & Colors --- */
-        html, body, [class*="st-"], [class*="css-"] {{
+        /* We target the main containers, not ALL elements with [class*="st-"].
+        This prevents overriding Streamlit's internal icon fonts.
+        */
+        html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{
             font-family: 'Inter', sans-serif;
         }}
+        /* --- ⭐️⭐️⭐️ END OF FIX ⭐️⭐️⭐️ --- */
+
 
         /* --- Custom Headers --- */
         h1 {{
@@ -958,10 +964,12 @@ def main():
 
 if __name__ == "__main__":
     # --- ⭐️ 0. Set Page Config (Must be first) ---
-    st.set_page_config(
-        page_title="SPUS Quant Analyzer",
-        page_icon="https->//www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png",
-        layout="wide"
-    )
+    # This is technically redundant because it's at the top,
+    # but it's good practice for scripts that might be run directly.
+    # The one at the top is the one that actually runs.
+    # st.set_page_config(
+    #     page_title="SPUS Quant Analyzer",
+    #     page_icon="https->//www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png",
+    #     layout="wide"
+    # )
     main()
-

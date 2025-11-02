@@ -12,7 +12,7 @@ import streamlit.components.v1 as components # Import components
 # This must be the first Streamlit command.
 st.set_page_config(
     page_title="SPUS Quant Analyzer",
-    page_icon="https://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", # <-- ⭐️ FIX 1
+    page_icon="https://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", 
     layout="wide"
 )
 
@@ -259,7 +259,7 @@ def load_css():
 
 
 # --- ⭐️ ALL HELPER FUNCTIONS (UNCHANGED) ⭐️ ---
-# All backend and data functions are kept identical, as requested.
+# All backend and data functions are kept identical.
 
 @st.cache_data
 def load_excel_data(excel_path):
@@ -700,9 +700,11 @@ def main():
     # --- ⭐️ NEW: Initialize Session State ---
     if 'selected_ticker' not in st.session_state:
         st.session_state.selected_ticker = None
-    # --- ⭐️ NEW: Add scroll flag ---
+    # --- ⭐️ NEW: Add scroll flags ---
     if 'scroll_to_detail' not in st.session_state:
         st.session_state.scroll_to_detail = False
+    if 'active_anchor_id' not in st.session_state:
+        st.session_state.active_anchor_id = None
     # --- END NEW ---
 
     # --- ⭐️ Call CSS loader
@@ -733,6 +735,7 @@ def main():
             # Reset selected ticker on full run
             st.session_state.selected_ticker = None
             st.session_state.scroll_to_detail = False # Reset scroll flag
+            st.session_state.active_anchor_id = None # Reset scroll flag
             st.rerun()
         
         st.divider()
@@ -805,16 +808,21 @@ def main():
             tab_titles.remove("All Results")
             tab_titles.append("All Results")
 
-        # --- ⭐️ NEW: Callback Function ---
-        def set_ticker(ticker_symbol):
+        # --- ⭐️ UPDATED: Callback Function ---
+        def set_ticker(ticker_symbol, anchor_id_to_scroll):
             st.session_state.selected_ticker = ticker_symbol
             st.session_state.scroll_to_detail = True # <-- ⭐️ SET SCROLL FLAG
-        # --- END NEW ---
+            st.session_state.active_anchor_id = anchor_id_to_scroll # <-- ⭐️ STORE THE UNIQUE ANCHOR
+        # --- END UPDATED ---
 
         tabs = st.tabs(tab_titles)
 
         for i, sheet_name in enumerate(tab_titles):
             with tabs[i]:
+                # ⭐️ 1. Create a unique, HTML-safe anchor ID for this tab
+                safe_sheet_name = sheet_name.replace(' ', '-').replace('&', 'and').replace('/', '_')
+                anchor_id = f"detail-view-anchor-{safe_sheet_name}"
+                
                 df_to_show = data_sheets[sheet_name]
 
                 # --- ⭐️⭐️⭐️ NEW: Two-Column Master-Detail Layout ⭐️⭐️⭐️ ---
@@ -841,7 +849,7 @@ def main():
                                 label, 
                                 key=f"{sheet_name}_{ticker}", 
                                 on_click=set_ticker, 
-                                args=(ticker,), 
+                                args=(ticker, anchor_id,),  # ⭐️ 2. Pass the unique anchor_id to the callback
                                 use_container_width=True,
                                 type=button_type
                             )
@@ -879,7 +887,7 @@ def main():
                             # --- ⭐️ Display Ticker Details ⭐️ ---
                             
                             # --- ⭐️ NEW: Add Anchor Point ---
-                            st.markdown('<a id="detail-view-anchor"></a>', unsafe_allow_html=True)
+                            st.markdown(f'<a id="{anchor_id}"></a>', unsafe_allow_html=True) # ⭐️ 3. Use the unique anchor_id here
                             
                             # 1. Header
                             st.header(f"Details for: {selected_ticker}")
@@ -938,38 +946,39 @@ def main():
                 
                 # --- ⭐️⭐️⭐️ END NEW LAYOUT ⭐️⭐️⭐️ ---
 
-    # --- ⭐️ NEW: JavaScript injection for mobile scroll ---
+    # --- ⭐️ UPDATED: JavaScript injection for mobile scroll ---
     if st.session_state.get('scroll_to_detail', False):
-        # This JS runs *after* the page re-renders
-        components.html(f"""
-        <script>
-            // We need to wait for Streamlit to finish rendering the columns
-            setTimeout(function() {{
-                // Only scroll if on a small screen (Streamlit's mobile breakpoint is 768px)
-                if (window.innerWidth < 768) {{
-                    var anchor = window.parent.document.getElementById('detail-view-anchor');
-                    if (anchor) {{
-                        // Scroll the anchor into view
-                        anchor.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-                    }}
-                }}
-            }}, 300); // 300ms delay
-        </script>
-        """, height=0)
         
-        # Reset the scroll flag so it doesn't run again on non-click reruns
+        # ⭐️ Get the *specific* anchor ID from session state
+        anchor_id_to_find = st.session_state.get('active_anchor_id', None)
+        
+        if anchor_id_to_find:
+            # This JS runs *after* the page re-renders
+            components.html(f"""
+            <script>
+                // We need to wait for Streamlit to finish rendering the columns
+                setTimeout(function() {{
+                    // Only scroll if on a small screen (Streamlit's mobile breakpoint is 768px)
+                    if (window.innerWidth < 768) {{
+                        
+                        // ⭐️ Find the anchor using the UNIQUE ID from Python
+                        var anchor = window.parent.document.getElementById('{anchor_id_to_find}');
+                        
+                        if (anchor) {{
+                            // Scroll the anchor into view
+                            anchor.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                        }}
+                    }}
+                }}, 300); // 300ms delay
+            </script>
+            """, height=0)
+        
+        # Reset the scroll flags so it doesn't run again on non-click reruns
         st.session_state.scroll_to_detail = False
-    # --- ⭐️ END NEW ---
+        st.session_state.active_anchor_id = None # ⭐️ Reset the active anchor
+    # --- ⭐️ END UPDATED ---
 
 
 if __name__ == "__main__":
-    # --- ⭐️ 0. Set Page Config (Must be first) ---
-    # This is technically redundant because it's at the top,
-    # but it's good practice for scripts that might be run directly.
-    # The one at the top is the one that actually runs.
-    # st.set_page_config(
-    #     page_title="SPUS Quant Analyzer",
-    #     page_icon="https->//www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png",
-    #     layout="wide"
-    # )
+    # The st.set_page_config() at the top of the file is the only one needed.
     main()

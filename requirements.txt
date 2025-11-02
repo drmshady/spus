@@ -1,9 +1,11 @@
+# requirements.txt
 streamlit
 pandas
+numpy
 yfinance
 pandas-ta
+scipy
 openpyxl
-reportlab
-requests
-matplotlib
+plotly
+reportlab 
 

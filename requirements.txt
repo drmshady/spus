@@ -6,4 +6,8 @@ openpyxl
 reportlab
 requests
 matplotlib
-
+scikit-learn
+scipy
+plotly
+beautifulsoup4
+lxml

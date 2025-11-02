@@ -319,9 +319,9 @@ def generate_quant_report(CONFIG, progress_callback=None):
         'Top Undervalued (Graham)': results_df_display[results_df_display['Valuation (Graham)'] == 'Undervalued (Graham)'].sort_values(by='Z_Value', ascending=False).head(20),
         'All Results (Raw)': results_df # Full raw data
     }
-
+    
     # Save Excel
-    excel_file_path = os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH'])
+    excel_file_path = os.path.join(BASE_DIR, CONFIG.get('LOGGING', {}).get('EXCEL_FILE_PATH', './spus_analysis_results.xlsx'))
     try:
         with pd.ExcelWriter(excel_file_path, engine='openpyxl') as writer:
             for sheet_name, df_sheet in data_sheets.items():
@@ -590,7 +590,8 @@ def main():
 
         # --- Download Buttons ---
         st.subheader("Downloads")
-        excel_path, pdf_path = get_latest_reports(os.path.join(BASE_DIR, CONFIG['EXCEL_FILE_PATH']))
+        excel_base_path = os.path.join(BASE_DIR, CONFIG.get('LOGGING', {}).get('EXCEL_FILE_PATH', './spus_analysis_results.xlsx'))
+        excel_path, pdf_path = get_latest_reports(excel_base_path)
         
         if excel_path:
             with open(excel_path, "rb") as file:
@@ -909,3 +910,4 @@ if __name__ == "__main__":
     else:
         # Run the Streamlit app
         main()
+

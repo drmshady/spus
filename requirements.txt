@@ -12,5 +12,5 @@ plotly
 beautifulsoup4
 lxml
 pytz
-google-generativeai>=0.8.0
-# Force rebuild 124
+openai
+

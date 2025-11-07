@@ -18,6 +18,7 @@ from plotly.subplots import make_subplots
 from scipy.stats.mstats import winsorize
 import pytz 
 import pickle 
+from collections import deque # For FIFO
 
 # --- ⭐️ 1. Set Page Configuration FIRST ⭐️ ---
 st.set_page_config(
@@ -680,19 +681,22 @@ def create_radar_chart(ticker_data, factor_cols):
     )
     return fig
 
-def create_portfolio_treemap(pl_df):
+# --- ✅ MODIFIED (USER REQ): Now uses 'open_positions' df ---
+def create_portfolio_treemap(open_positions_df):
     """
     Creates a Plotly Treemap to visualize portfolio allocation and performance.
     """
-    if pl_df.empty:
+    if open_positions_df.empty:
         return go.Figure().update_layout(title_text="Portfolio Treemap (No data)")
 
-    if 'Sector' not in pl_df.columns:
-        pl_df['Sector'] = "Unknown"
+    if 'Sector' not in open_positions_df.columns:
+        open_positions_df['Sector'] = "Unknown"
         
-    # --- ✅ MODIFIED: Use 'Name' for the label ---
+    # Create 'P/L (%)' for color
+    open_positions_df['P/L (%)'] = (open_positions_df['Unrealized P/L'] / open_positions_df['Total Cost']) * 100
+        
     fig = px.treemap(
-        pl_df,
+        open_positions_df,
         path=[px.Constant("My Portfolio"), 'Sector', 'Name'],  # Hierarchy
         values='Market Value',
         color='P/L (%)',
@@ -708,7 +712,7 @@ def create_portfolio_treemap(pl_df):
     fig.update_traces(
         textinfo="label+value+text",
         texttemplate="%{label}<br>$%{value:,.0f}<br>%{customdata[0]:.2f}%",
-        customdata=pl_df[['P/L (%)']]
+        customdata=open_positions_df[['P/L (%)']]
     )
     return fig
 
@@ -869,14 +873,17 @@ def run_market_analyzer_app(config_file_name):
         st.session_state.run_timestamp = time.time() 
     if 'active_tab' not in st.session_state:
         st.session_state.active_tab = "🏆 Quant Rankings"
-    if 'portfolio' not in st.session_state:
-        st.session_state.portfolio = []
     if 'market_regime' not in st.session_state:
         st.session_state.market_regime = "UNKNOWN"
-        
-    # --- ✅ MODIFIED (P4): "Go Back" Button REMOVED ---
-    # The button was here. It has been deleted.
-
+    
+    # --- ✅ NEW (USER REQ): Portfolio Transaction Log ---
+    if 'transactions' not in st.session_state:
+        st.session_state.transactions = [] # List of transaction dicts
+    if 'cash' not in st.session_state:
+        st.session_state.cash = 100000.0 # Default cash
+    if 'prefill_transaction' not in st.session_state:
+        st.session_state.prefill_transaction = None # For "Add to Portfolio" button
+    
     # --- ⭐️ START OF MOVED BLOCK ⭐️ ---
     # This block is moved from the bottom to here to fix the UnboundLocalError
     # --- ✅ MODIFIED: Load Data using config_file_name as key ---
@@ -939,10 +946,8 @@ def run_market_analyzer_app(config_file_name):
         st.subheader("Stock Analyzer")
         new_ticker = st.text_input("Analyze Single Ticker:", placeholder="e.g., MSFT or 1120.SR").upper().strip()
         
-        # --- ✅ MODIFIED (Suggestion #5): Debounce button ---
-        # Button is disabled if new_ticker is an empty string
-        if st.button("Analyze and Deep Dive", disabled=(not new_ticker)):
-            if new_ticker: # This check is now slightly redundant but good practice
+        if st.button("Analyze and Deep Dive"):
+            if new_ticker:
                 if 'raw_df' not in st.session_state:
                     st.warning("Priming data... please click 'Analyze' again.")
                     st.rerun() 
@@ -980,42 +985,58 @@ def run_market_analyzer_app(config_file_name):
                                 st.error(f"Failed to fetch data for {new_ticker}. Error: {result.get('error', 'Unknown')}")
                         except Exception as e:
                             st.error(f"An exception occurred while processing {new_ticker}: {e}")
-            # This 'else' is no longer reachable due to the 'disabled' check
-            # else:
-            #     st.warning("Please enter a ticker symbol.")
+            else:
+                st.warning("Please enter a ticker symbol.")
         
         st.divider()
 
-        # --- ✅ MODIFIED (P3): Added 'QxM' to default weights ---
-        # --- ✅ MODIFIED (Suggestion #1): QxM weight now defaults to 0 from config
-        default_weights = CONFIG.get('DEFAULT_FACTOR_WEIGHTS', {
-            "Value": 0.20, "Momentum": 0.15, "Quality": 0.15,
-            "Size": 0.10, "LowVolatility": 0.15, "Technical": 0.15,
-            "QxM": 0.10 # <-- This default is overridden by config.json
-        })
-        
-        def callback_reset_weights():
-            for factor in default_weights.keys():
-                key_to_del = f"weight_{factor}" 
-                if key_to_del in st.session_state:
-                    del st.session_state[key_to_del]
-
-        st.button("Reset Factor Weights", on_click=callback_reset_weights)
-        
+        # --- ✅ MODIFIED (USER REQ): Factor Weight Presets ---
         st.subheader("Factor Weights")
+        
+        # Define presets
+        factor_presets = {
+            "Default": CONFIG.get('DEFAULT_FACTOR_WEIGHTS', {}),
+            "Bullish (Momentum Focus)": {
+                "Value": 0.15, "Momentum": 0.25, "Quality": 0.15,
+                "Size": 0.05, "LowVolatility": 0.05, "Technical": 0.20, "QxM": 0.15
+            },
+            "Bearish (Quality Focus)": {
+                "Value": 0.20, "Momentum": 0.05, "Quality": 0.25,
+                "Size": 0.05, "LowVolatility": 0.25, "Technical": 0.10, "QxM": 0.10
+            },
+            "Value Focus": {
+                "Value": 0.40, "Momentum": 0.10, "Quality": 0.20,
+                "Size": 0.05, "LowVolatility": 0.10, "Technical": 0.05, "QxM": 0.10
+            }
+        }
+        
+        def apply_preset(preset_name):
+            weights = factor_presets.get(preset_name, factor_presets["Default"])
+            for factor, weight in weights.items():
+                st.session_state[f"weight_{factor}"] = weight
+
+        preset_selection = st.selectbox(
+            "Load Weight Preset:", 
+            options=factor_presets.keys(), 
+            index=0, 
+            key="preset_selector"
+        )
+
+        if st.button("Apply Preset"):
+            apply_preset(preset_selection)
+            st.rerun()
+
         st.info("Adjust weights to re-rank stocks. Weights will be normalized.")
         
         weights = {}
+        default_weights = factor_presets["Default"] # Base defaults
+        
         for factor, default in default_weights.items():
-            # Check if the factor Z-score column exists before adding a slider
-            
-            # --- ⭐️ THIS IS THE FIX ⭐️ ---
-            # 'raw_df' is now guaranteed to exist here
             if f"Z_{factor}" in raw_df.columns:
-            # --- ⭐️ END OF FIX ⭐️ ---
-                weights[factor] = st.slider(factor, 0.0, 1.0, default, 0.05, key=f"weight_{factor}")
+                # Use st.session_state to hold the current value, or default if not set
+                current_weight = st.session_state.get(f"weight_{factor}", default)
+                weights[factor] = st.slider(factor, 0.0, 1.0, current_weight, 0.05, key=f"weight_{factor}")
             else:
-                # If Z_QxM hasn't been generated yet, don't show the slider
                 if factor == "QxM" and 'raw_df' not in st.session_state:
                     st.info("Run analysis to enable 'QxM' factor.")
                 else:
@@ -1371,40 +1392,50 @@ def run_market_analyzer_app(config_file_name):
                 )
                 st.plotly_chart(sector_heatmap, use_container_width=True)
     
-    # --- ✅ NEW: Tab 4: My Portfolio ---
+    # --- ✅ NEW (USER REQ): Tab 4: My Portfolio (Transaction Log) ---
     elif selected_tab == "💼 My Portfolio":
-        display_portfolio_tab(st.session_state.raw_df, CONFIG) # <-- Pass CONFIG
+        display_portfolio_tab_v2(st.session_state.raw_df, all_histories, factor_z_cols, CONFIG)
             
 # --- ⭐️ NEW HELPER FUNCTION ⭐️ ---
 def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_cols, norm_weights, filtered_df, CONFIG):
     """
     Helper function to display the full Ticker Deep Dive page.
-    --- ✅ MODIFIED: Accepts CONFIG ---
-    --- ✅ MODIFIED (Suggestion #4): Calls AI On-Demand via button ---
+    --- ✅ MODIFIED (USER REQ): AI Summary is now on-demand ---
     """
     selected_ticker = ticker_data.name
     
     # --- ✅ MODIFIED: Add Name to Subheader ---
     st.subheader(f"Analysis for: {selected_ticker} - {ticker_data.get('shortName', '')}")
 
+    # --- ✅ NEW (USER REQ): Add to Portfolio Button ---
+    add_col1, add_col2, add_col3 = st.columns([2,2,1])
+    
     # Add Previous/Next Buttons
     try:
         ticker_list = filtered_df.index.tolist()
         current_index = ticker_list.index(selected_ticker)
-        prev_col, next_col = st.columns(2)
         
         is_first = (current_index == 0)
-        if prev_col.button("⬅️ Previous", use_container_width=True, disabled=is_first, key="prev_ticker"):
+        if add_col1.button("⬅️ Previous", use_container_width=True, disabled=is_first, key="prev_ticker"):
             st.session_state.selected_ticker = ticker_list[current_index - 1]
             st.rerun()
             
         is_last = (current_index == len(ticker_list) - 1)
-        if next_col.button("Next ➡️", use_container_width=True, disabled=is_last, key="next_ticker"):
+        if add_col2.button("Next ➡️", use_container_width=True, disabled=is_last, key="next_ticker"):
             st.session_state.selected_ticker = ticker_list[current_index + 1]
             st.rerun()
 
     except ValueError:
         st.info("Previous/Next navigation is only available for stocks in the filtered list.")
+
+    if add_col3.button("➕ Add to Portfolio", use_container_width=True, type="primary"):
+        st.session_state.prefill_transaction = {
+            "ticker": selected_ticker,
+            "price": ticker_data.get('last_price', 0.0)
+        }
+        st.session_state.active_tab = "💼 My Portfolio"
+        st.rerun()
+    # --- END OF NEW BLOCK ---
 
     display_buy_signal_checklist(ticker_data)
     st.divider()
@@ -1441,37 +1472,35 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     st.divider()
 
-    # --- ✅ MODIFIED (Suggestion #4): On-Demand AI Summary via Button ---
+    # --- ✅ MODIFIED (USER REQ): On-Demand AI Summary (OpenAI) ---
     st.subheader("🤖 AI-Powered Deep Dive")
     cache_key = f"ai_summary_{selected_ticker}"
     
-    if st.button(f"🧠 Generate AI Analysis for {selected_ticker}"):
-        # If button is clicked, generate summary and cache it
-        with st.spinner(f"Generating AI analysis for {selected_ticker}... This may take a moment."):
-            try:
-                # Get the data needed for the prompt
-                company_name = ticker_data.get('shortName', selected_ticker)
-                # Get the raw news string, not the AI summary
-                news_headlines = ticker_data.get('news_list', 'No recent news found.')
-                
-                # Call the (new) AI function ON-DEMAND
-                summary = get_ai_stock_analysis(
-                    ticker_symbol=selected_ticker,
-                    company_name=company_name,
-                    news_headlines_str=news_headlines,
-                    parsed_data=ticker_data, # Pass the whole row
-                    CONFIG=CONFIG # Pass the config for the API key
-                )
-                st.session_state[cache_key] = summary
-            except Exception as e:
-                st.error(f"Failed to generate AI summary: {e}")
-                st.session_state[cache_key] = "AI Summary generation failed."
-    
-    # Display the summary (if it exists in cache)
+    # Check if we already generated this summary
     if cache_key in st.session_state:
         st.markdown(st.session_state[cache_key], unsafe_allow_html=True)
     else:
-        st.info("Click the button above to generate an AI-powered summary.")
+        # If not, show the button
+        if st.button(f"🤖 Click to Generate AI Summary for {selected_ticker}", type="secondary"):
+            with st.spinner(f"Generating AI analysis for {selected_ticker}... This may take a moment."):
+                try:
+                    # Get the data needed for the prompt
+                    company_name = ticker_data.get('shortName', selected_ticker)
+                    news_headlines = ticker_data.get('news_list', 'No recent news found.')
+                    
+                    # Call the (new) AI function ON-DEMAND
+                    summary = get_ai_stock_analysis(
+                        ticker_symbol=selected_ticker,
+                        company_name=company_name,
+                        news_headlines_str=news_headlines,
+                        parsed_data=ticker_data, # Pass the whole row
+                        CONFIG=CONFIG # Pass the config for the API key
+                    )
+                    st.session_state[cache_key] = summary
+                    st.rerun() # Rerun to display the summary
+                except Exception as e:
+                    st.error(f"Failed to generate AI summary: {e}")
+                    st.session_state[cache_key] = "AI Summary generation failed."
     # --- END OF MODIFICATION ---
     
     # --- Raw News Headlines ---
@@ -1548,9 +1577,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     with risk_col3:
         pos_shares = ticker_data.get('Position Size (Shares)', np.nan)
         pos_display = f"{pos_shares:.0f} Shares" if pd.notna(pos_shares) else "N/A"
-        
-        # --- ✅ MODIFIED (Suggestion #3): Read from config
-        risk_usd = ticker_data.get('Risk Per Trade (USD)', CONFIG.get('RISK_MANAGEMENT', {}).get('TOTAL_PORTFOLIO_EQUITY', 10000) * CONFIG.get('RISK_MANAGEMENT', {}).get('RISK_PER_TRADE_PERCENT', 0.005))
+        risk_usd = ticker_data.get('Risk Per Trade (USD)', 50)
         st.metric("Position Size (Shares)", pos_display, help=f"Based on ${risk_usd:,.0f} risk")
     
     with risk_col4:
@@ -1582,7 +1609,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     be_ob_label = f"{'✅ Mitigated' if be_ob_validated else 'Fresh'} Bearish OB"
     be_ob_display = f"${be_ob_high:.2f} - ${be_ob_low:.2f}" if pd.notna(be_ob_low) else "N/A"
-    be_ob_help = f"FVG: {'Yes' if be_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
+    be_ob_help = f"FVG: {'Yes' if b_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
     zone_cols[1].metric(be_ob_label, be_ob_display, help=be_ob_help)
     
     support = ticker_data.get('last_swing_low', np.nan)
@@ -1611,21 +1638,213 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
 # --- ⭐️ END OF DEEP DIVE HELPER ⭐️ ---
 
 
-# --- ✅ NEW PORTFOLIO TAB FUNCTION ---
-def display_portfolio_tab(all_data_df, CONFIG): # <-- Pass CONFIG
+# --- ✅ NEW (USER REQ): Portfolio v2 (Transaction Log) ---
+def process_transactions(transactions, all_data_df):
+    """
+    Processes a list of transactions to calculate open positions and realized P/L using FIFO.
+    """
+    open_positions = {}
+    realized_pl = 0.0
     
-    st.header("💼 My Portfolio")
+    # Sort transactions by date to ensure correct FIFO processing
+    transactions.sort(key=lambda x: x['date'])
     
-    # --- 1. File Save/Load ---
+    # Use a dictionary to hold a deque (FIFO queue) for each ticker's buy lots
+    buy_lots = {} 
+
+    for tx in transactions:
+        ticker = tx['ticker']
+        
+        if tx['type'] == 'Buy':
+            # Add new buy lot to the queue
+            if ticker not in buy_lots:
+                buy_lots[ticker] = deque()
+            buy_lots[ticker].append({'shares': tx['shares'], 'price': tx['price']})
+            
+        elif tx['type'] == 'Sell':
+            shares_to_sell = tx['shares']
+            sell_price = tx['price']
+            
+            if ticker not in buy_lots or not buy_lots[ticker]:
+                st.error(f"Error: Trying to sell {ticker} but no buy lots found.")
+                continue
+                
+            while shares_to_sell > 0:
+                if not buy_lots[ticker]:
+                    st.error(f"Error: Sold more {ticker} than owned.")
+                    break
+                    
+                first_lot = buy_lots[ticker][0]
+                
+                if first_lot['shares'] > shares_to_sell:
+                    # Sell part of the first lot
+                    realized_pl += (sell_price - first_lot['price']) * shares_to_sell
+                    first_lot['shares'] -= shares_to_sell
+                    shares_to_sell = 0
+                else:
+                    # Sell the entire first lot (or what's left)
+                    realized_pl += (sell_price - first_lot['price']) * first_lot['shares']
+                    shares_to_sell -= first_lot['shares']
+                    buy_lots[ticker].popleft() # Remove the empty lot
+
+    # --- Calculate Final Open Positions ---
+    open_positions_list = []
+    for ticker, lots in buy_lots.items():
+        if not lots:
+            continue
+            
+        total_shares = sum(lot['shares'] for lot in lots)
+        total_cost = sum(lot['shares'] * lot['price'] for lot in lots)
+        
+        if total_shares > 0:
+            avg_cost = total_cost / total_shares
+            
+            # Get current data from raw_df
+            if ticker in all_data_df.index:
+                ticker_data = all_data_df.loc[ticker]
+                current_price = ticker_data['last_price']
+                name = ticker_data.get('shortName', ticker)
+                sector = ticker_data.get('Sector', 'Unknown')
+                # Get factor scores
+                factor_scores = {col: ticker_data.get(col, 0) for col in all_data_df.columns if col.startswith('Z_')}
+            else:
+                current_price = np.nan
+                name = ticker
+                sector = "Unknown"
+                factor_scores = {}
+            
+            market_value = total_shares * current_price
+            unrealized_pl = market_value - total_cost
+            
+            pos_dict = {
+                'Ticker': ticker,
+                'Name': name,
+                'Sector': sector,
+                'Shares': total_shares,
+                'Avg Cost': avg_cost,
+                'Total Cost': total_cost,
+                'Current Price': current_price,
+                'Market Value': market_value,
+                'Unrealized P/L': unrealized_pl
+            }
+            pos_dict.update(factor_scores) # Add all Z_scores
+            open_positions_list.append(pos_dict)
+
+    open_positions_df = pd.DataFrame(open_positions_list)
+    if not open_positions_df.empty:
+        open_positions_df = open_positions_df.set_index('Ticker')
+        
+    return open_positions_df, realized_pl
+
+
+def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
+    
+    st.header("💼 My Portfolio (Transaction-Based)")
+    
+    # --- 1. Process Data ---
+    transactions = st.session_state.get('transactions', [])
+    open_positions, realized_pl = process_transactions(transactions, all_data_df)
+    
+    # --- 2. Portfolio KPIs ---
+    st.subheader("Portfolio Summary")
+    
+    cash = st.session_state.get('cash', 0.0)
+    market_value = open_positions['Market Value'].sum() if not open_positions.empty else 0.0
+    total_portfolio_value = cash + market_value
+    unrealized_pl = open_positions['Unrealized P/L'].sum() if not open_positions.empty else 0.0
+    
+    kpi_cols = st.columns(4)
+    kpi_cols[0].metric("Total Portfolio Value", f"${total_portfolio_value:,.2f}", help="Cash + Market Value of Stocks")
+    kpi_cols[1].metric("Cash", f"${cash:,.2f}")
+    kpi_cols[2].metric("Unrealized P/L", f"${unrealized_pl:,.2f}", delta_color="normal" if unrealized_pl >= 0 else "inverse")
+    kpi_cols[3].metric("Realized P/L (FIFO)", f"${realized_pl:,.2f}", delta_color="normal" if realized_pl >= 0 else "inverse")
+    
+    st.divider()
+
+    # --- 3. Portfolio Management (Add/Load/Save) ---
     st.subheader("Portfolio Management")
+    
+    # --- Cash Management ---
+    new_cash = st.number_input(
+        "Set Your Cash Balance:", 
+        min_value=0.0, 
+        value=st.session_state.cash, 
+        step=1000.0, 
+        format="%.2f",
+        key="cash_input"
+    )
+    if new_cash != st.session_state.cash:
+        st.session_state.cash = new_cash
+        st.rerun()
+
+    # --- Add New Transaction ---
+    with st.expander("Add New Transaction"):
+        # Check for pre-fill from Deep Dive tab
+        prefill = st.session_state.prefill_transaction
+        default_ticker = prefill['ticker'] if prefill else ""
+        default_price = prefill['price'] if prefill else 0.0
+        
+        with st.form("add_transaction_form"):
+            form_col1, form_col2, form_col3, form_col4, form_col5 = st.columns(5)
+            
+            tx_date = form_col1.date_input("Date", value=datetime.now(SAUDI_TZ).date())
+            tx_ticker = form_col2.text_input("Ticker Symbol", value=default_ticker).upper().strip()
+            tx_type = form_col3.selectbox("Type", ["Buy", "Sell"])
+            tx_shares = form_col4.number_input("Shares", min_value=0.0, step=1.0)
+            tx_price = form_col5.number_input("Price", min_value=0.01, value=default_price, format="%.2f")
+            tx_notes = st.text_input("Notes (e.g., 'SMC Entry', 'Averaging down')")
+            
+            submitted = st.form_submit_button("Add Transaction")
+            
+            if submitted:
+                if not tx_ticker or tx_shares == 0 or tx_price == 0:
+                    st.error("Please fill out all fields (Ticker, Shares, Price).")
+                elif tx_ticker not in all_data_df.index:
+                    st.error(f"Ticker '{tx_ticker}' not found. Run a 'Deep Dive' for it first from the sidebar.")
+                else:
+                    tx_cost = tx_shares * tx_price
+                    if tx_type == 'Buy' and st.session_state.cash < tx_cost:
+                        st.error(f"Not enough cash! Transaction cost is ${tx_cost:,.2f}, but you only have ${st.session_state.cash:,.2f}.")
+                    else:
+                        new_tx = {
+                            "id": f"{tx_date}_{tx_ticker}_{time.time()}", # Unique ID
+                            "date": str(tx_date),
+                            "ticker": tx_ticker,
+                            "type": tx_type,
+                            "shares": tx_shares,
+                            "price": tx_price,
+                            "notes": tx_notes
+                        }
+                        st.session_state.transactions.append(new_tx)
+                        
+                        # Adjust cash
+                        if tx_type == 'Buy':
+                            st.session_state.cash -= tx_cost
+                        else: # Sell
+                            st.session_state.cash += tx_cost
+                            
+                        st.success(f"Added {tx_type} of {tx_shares} shares of {tx_ticker}!")
+                        
+                        # Clear prefill
+                        if st.session_state.prefill_transaction:
+                            st.session_state.prefill_transaction = None
+                        st.rerun()
+
+    # --- 4. Load/Save Transactions ---
     file_col1, file_col2 = st.columns([1, 3])
     
     with file_col1:
-        portfolio_json = json.dumps(st.session_state.portfolio, indent=4)
+        # Save both transactions and cash
+        portfolio_data = {
+            "cash": st.session_state.cash,
+            "transactions": st.session_state.transactions
+        }
+        portfolio_json = json.dumps(portfolio_data, indent=4)
+        
         st.download_button(
-            label="💾 Save Portfolio",
+            label="💾 Save Portfolio (JSON)",
             data=portfolio_json,
-            file_name="my_portfolio.json",
+            file_name="my_portfolio_transactions.json",
             mime="application/json",
             use_container_width=True
         )
@@ -1634,164 +1853,260 @@ def display_portfolio_tab(all_data_df, CONFIG): # <-- Pass CONFIG
         uploaded_file = st.file_uploader("📂 Load Portfolio (JSON)", type="json")
         if uploaded_file is not None:
             try:
-                new_portfolio = json.load(uploaded_file)
-                if isinstance(new_portfolio, list) and all('ticker' in item for item in new_portfolio):
-                    st.session_state.portfolio = new_portfolio
-                    st.success(f"Successfully loaded {len(new_portfolio)} positions!")
+                new_portfolio_data = json.load(uploaded_file)
+                if isinstance(new_portfolio_data, dict) and "transactions" in new_portfolio_data and "cash" in new_portfolio_data:
+                    st.session_state.transactions = new_portfolio_data["transactions"]
+                    st.session_state.cash = new_portfolio_data["cash"]
+                    st.success(f"Successfully loaded {len(st.session_state.transactions)} transactions and cash balance!")
+                    st.rerun()
                 else:
-                    st.error("Invalid portfolio file format.")
+                    st.error("Invalid portfolio file format. Expected a JSON with 'cash' and 'transactions' keys.")
             except Exception as e:
                 st.error(f"Error loading file: {e}")
-
-    # --- 2. Add New Position ---
-    with st.expander("Add New Position"):
-        with st.form("add_position_form"):
-            form_col1, form_col2, form_col3 = st.columns(3)
-            
-            new_ticker = form_col1.text_input("Ticker Symbol").upper().strip()
-            new_shares = form_col2.number_input("Number of Shares", min_value=0.0, step=1.0)
-            new_cost_basis = form_col3.number_input("Cost Basis (Price per Share)", min_value=0.01, format="%.2f")
-            
-            submitted = st.form_submit_button("Add Position")
-            
-            if submitted:
-                if not new_ticker or new_shares == 0 or new_cost_basis == 0:
-                    st.error("Please fill out all fields.")
-                elif new_ticker not in all_data_df.index:
-                    st.error(f"Ticker '{new_ticker}' not found. Run a 'Deep Dive' for it first from the sidebar.")
-                else:
-                    new_position = {
-                        "ticker": new_ticker,
-                        "shares": new_shares,
-                        "cost_basis": new_cost_basis
-                    }
-                    st.session_state.portfolio.append(new_position)
-                    st.success(f"Added {new_shares} shares of {new_ticker}!")
-                    st.rerun()
-
+                
     st.divider()
+    
+    if open_positions.empty and not transactions:
+        st.info("Your portfolio is empty. Add a new transaction above.")
+        return
 
-    # --- 3. Display P/L Dashboard ---
+    # --- 5. Open Positions & Analytics ---
     st.subheader("Open Positions")
+    if open_positions.empty:
+        st.info("No open positions.")
+    else:
+        st.dataframe(open_positions, use_container_width=True,
+            column_config={
+                "Name": st.column_config.TextColumn("Name", width="medium"),
+                "Avg Cost": st.column_config.NumberColumn(format="$%.2f"),
+                "Current Price": st.column_config.NumberColumn(format="$%.2f"),
+                "Market Value": st.column_config.NumberColumn(format="$%.2f"),
+                "Total Cost": st.column_config.NumberColumn(format="$%.2f"),
+                "Unrealized P/L": st.column_config.NumberColumn(format="$%.2f"),
+            }
+        )
     
-    if not st.session_state.portfolio:
-        st.info("Your portfolio is empty. Add a new position above.")
-        return
+    st.divider()
+    st.subheader("Portfolio Analytics")
 
-    portfolio_data = []
-    total_market_value = 0
-    total_cost = 0
-    
-    # --- ✅ MODIFIED: Build list of formatted names for selectbox ---
-    position_options = {} # Use a dict for {formatted_name: ticker}
-
-    for position in st.session_state.portfolio:
-        ticker = position['ticker']
-        if ticker not in all_data_df.index:
-            st.warning(f"Data for {ticker} is missing. Please run analysis for this ticker.")
-            continue
+    if not open_positions.empty:
+        # --- 6. Allocation & Factor Analysis (USER REQ) ---
+        analysis_col1, analysis_col2 = st.columns(2)
+        
+        with analysis_col1:
+            st.subheader("Performance Attribution (Unrealized P/L)")
+            # Add P/L %
+            open_positions['P/L (%)'] = (open_positions['Unrealized P/L'] / open_positions['Total Cost']) * 100
             
-        ticker_data = all_data_df.loc[ticker]
-        current_price = ticker_data['last_price']
-        
-        market_value = position['shares'] * current_price
-        total_cost_basis = position['shares'] * position['cost_basis']
-        
-        pl_dollars = market_value - total_cost_basis
-        pl_percent = (pl_dollars / total_cost_basis) * 100 if total_cost_basis != 0 else 0
-        
-        total_market_value += market_value
-        total_cost += total_cost_basis
-        
-        # --- ✅ ADDED: Get 'shortName' ---
-        name = ticker_data.get('shortName', ticker)
-        
-        portfolio_data.append({
-            "Ticker": ticker,
-            "Name": name, # <-- ✅ ADDED
-            "Shares": position['shares'],
-            "Cost Basis": position['cost_basis'],
-            "Current Price": current_price,
-            "Market Value": market_value,
-            "Total Cost": total_cost_basis,
-            "P/L ($)": pl_dollars,
-            "P/L (%)": pl_percent,
-            "Sector": ticker_data.get('Sector', 'Unknown')
-        })
-        
-        # --- ✅ ADDED: Create formatted name for dropdown ---
-        position_options[f"{ticker} - {name}"] = ticker
+            pl_by_ticker = open_positions[['Unrealized P/L', 'Name']].sort_values(by="Unrealized P/L")
+            fig = px.bar(
+                pl_by_ticker, 
+                x='Unrealized P/L', 
+                y='Name', 
+                orientation='h', 
+                title="P/L Contribution by Stock",
+                color='Unrealized P/L',
+                color_continuous_scale='RdYlGn'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with analysis_col2:
+            st.subheader("Sector Allocation")
+            sector_alloc = open_positions.groupby('Sector')['Market Value'].sum().reset_index()
+            fig = px.pie(
+                sector_alloc, 
+                names='Sector', 
+                values='Market Value', 
+                title="Allocation by Sector",
+                hole=0.3
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # --- 7. Factor & Concentration Analysis (USER REQ) ---
+        st.subheader("Factor & Concentration Risk")
+        factor_col1, factor_col2 = st.columns(2)
+
+        with factor_col1:
+            st.markdown("**Weighted Factor Exposure**")
+            open_positions['Weight'] = open_positions['Market Value'] / market_value
+            
+            weighted_factors = []
+            for col in factor_z_cols: # Use the list from main app
+                if col in open_positions.columns:
+                    weighted_score = (open_positions[col] * open_positions['Weight']).sum()
+                    weighted_factors.append({'Factor': col.replace('Z_', ''), 'Weighted Z-Score': weighted_score})
+            
+            if weighted_factors:
+                factors_df = pd.DataFrame(weighted_factors)
+                fig = px.bar(
+                    factors_df, 
+                    x='Factor', 
+                    y='Weighted Z-Score', 
+                    title="Portfolio Weighted Factor Z-Scores",
+                    color='Weighted Z-Score',
+                    color_continuous_scale='RdYlGn'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        with factor_col2:
+            st.markdown("**Concentration Risk**")
+            top_5 = open_positions.sort_values(by='Market Value', ascending=False).head(5)
+            top_5_pct = (top_5['Market Value'].sum() / market_value) * 100
+            st.metric(f"Top 5 Holdings %", f"{top_5_pct:.1f}%")
+            
+            st.dataframe(top_5[['Name', 'Market Value', 'Weight']],
+                column_config={
+                    "Weight": st.column_config.ProgressColumn(
+                        "Weight",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=max(50.0, top_5['Weight'].max() * 100), # Dynamic max
+                    ),
+                    "Market Value": st.column_config.NumberColumn(format="$%,.0f")
+                }
+            )
+
+        # --- 8. Portfolio Correlation Matrix (USER REQ) ---
+        st.subheader("Portfolio Correlation Matrix")
+        open_tickers = open_positions.index.tolist()
+        if len(open_tickers) > 1:
+            hist_list = []
+            for ticker in open_tickers:
+                if ticker in all_histories:
+                    hist_list.append(all_histories[ticker]['Close'].rename(ticker))
+            
+            if hist_list:
+                combined_hist = pd.concat(hist_list, axis=1).fillna(method='ffill')
+                returns_corr = combined_hist.pct_change().corr()
+                
+                fig = px.imshow(
+                    returns_corr,
+                    text_auto=".2f",
+                    aspect="auto",
+                    color_continuous_scale='RdBu_r', 
+                    zmin=-1, zmax=1,
+                    title="Stock Returns Correlation"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Could not fetch historical data for correlation.")
+        else:
+            st.info("You need at least two open positions to calculate correlation.")
 
 
-    if not portfolio_data:
-        st.error("Could not calculate P/L for portfolio. Ensure tickers are valid.")
-        return
-
-    pl_df = pd.DataFrame(portfolio_data)
-
-    st.subheader("Portfolio Allocation")
-    portfolio_treemap = create_portfolio_treemap(pl_df)
-    st.plotly_chart(portfolio_treemap, use_container_width=True)
-
-    st.subheader("Positions Detail")
-    # --- ✅ MODIFIED: Add 'Name' to dataframe ---
-    st.dataframe(pl_df.set_index('Ticker'), use_container_width=True,
-        column_config={
-            "Name": st.column_config.TextColumn("Name", width="medium"), # <-- ✅ ADDED
-            "Cost Basis": st.column_config.NumberColumn(format="$%.2f"),
-            "Current Price": st.column_config.NumberColumn(format="$%.2f"),
-            "Market Value": st.column_config.NumberColumn(format="$%.2f"),
-            "Total Cost": st.column_config.NumberColumn(format="$%.2f"),
-            "P/L ($)": st.column_config.NumberColumn(format="$%.2f"),
-            "P/L (%)": st.column_config.NumberColumn(format="%.2f%%"),
-            "Sector": st.column_config.TextColumn("Sector"),
-        }
-    )
-    
-    total_pl = total_market_value - total_cost
-    total_pl_pct = (total_pl / total_cost) * 100 if total_cost != 0 else 0
-    
-    total_col1, total_col2, total_col3 = st.columns(3)
-    total_col1.metric("Total Market Value", f"${total_market_value:,.2f}")
-    total_col2.metric("Total Cost Basis", f"${total_cost:,.2f}")
-    total_col3.metric("Total P/L", f"${total_pl:,.2f}", delta=f"{total_pl_pct:.2f}%")
-
-    # --- 4. Position Analyzer ---
+    # --- 9. Position Analyzer ---
     st.divider()
     st.subheader("Position Analyzer")
     
-    # --- ✅ MODIFIED: Use formatted names in selectbox ---
-    selected_formatted_name = st.selectbox("Select a position to analyze:", options=position_options.keys())
-    
-    if selected_formatted_name:
-        selected_ticker = position_options[selected_formatted_name] # Get ticker from dict
+    if not open_positions.empty:
+        selected_ticker = st.selectbox("Select a position to analyze:", options=open_positions.index)
         
-        if st.button(f"🔬 Go to Deep Dive for {selected_ticker}", key=f"deep_dive_port_{selected_ticker}"):
-            st.session_state.selected_ticker = selected_ticker
-            st.session_state.active_tab = "🔬 Ticker Deep Dive"
-            st.rerun()
+        if selected_ticker:
+            position_data = open_positions.loc[selected_ticker]
+            ticker_data = all_data_df.loc[selected_ticker]
+            
+            if st.button(f"🔬 Go to Deep Dive for {selected_ticker}", key=f"deep_dive_port_{selected_ticker}"):
+                st.session_state.selected_ticker = selected_ticker
+                st.session_state.active_tab = "🔬 Ticker Deep Dive"
+                st.rerun()
 
-        position_data = next(p for p in st.session_state.portfolio if p['ticker'] == selected_ticker)
-        ticker_data = all_data_df.loc[selected_ticker]
-        
-        display_position_analysis(position_data, ticker_data)
+            display_position_analysis_v2(position_data, ticker_data, CONFIG)
     
-    if st.button("Clear Entire Portfolio"):
-        st.session_state.portfolio = []
-        st.rerun()
+    # --- 10. Transaction Log ---
+    st.divider()
+    st.subheader("Transaction Log")
+    if not transactions:
+        st.info("No transactions recorded.")
+    else:
+        tx_df = pd.DataFrame(transactions)
+        # Add a column for deleting
+        tx_df['Delete'] = False
+        
+        with st.form("edit_transactions_form"):
+            edited_df = st.data_editor(
+                tx_df,
+                column_config={
+                    "id": None, # Hide the ID column
+                    "Delete": st.column_config.CheckboxColumn("Delete?", default=False)
+                },
+                use_container_width=True,
+                num_rows="dynamic",
+                key="transaction_editor"
+            )
+            
+            if st.form_submit_button("Save Changes"):
+                # Filter out rows marked for deletion
+                new_transactions = edited_df[edited_df['Delete'] == False].to_dict('records')
+                # Remove the 'Delete' key before saving
+                for tx in new_transactions:
+                    del tx['Delete']
+                st.session_state.transactions = new_transactions
+                st.success("Transactions updated!")
+                st.rerun()
 
-# --- ✅ NEW POSITION ANALYSIS HELPER ---
-def display_position_analysis(position_data, ticker_data):
+# --- ✅ NEW (USER REQ): Position Analysis v2 (with Trailing Stop) ---
+def display_position_analysis_v2(position_data, ticker_data, CONFIG):
     
     pa_col1, pa_col2, pa_col3 = st.columns(3)
     
+    # --- Data Prep ---
+    cost_basis = position_data['Avg Cost']
+    current_price = position_data['Current Price']
+    
+    # Get original trade setup from quant data
+    initial_stop_loss = ticker_data.get('Final Stop Loss', np.nan)
+    initial_target = ticker_data.get('Take Profit Price', np.nan)
+    initial_risk_per_share = cost_basis - initial_stop_loss if pd.notna(initial_stop_loss) else np.nan
+    
+    current_rr = np.nan
+    if pd.notna(initial_stop_loss) and pd.notna(initial_target):
+        current_risk = current_price - initial_stop_loss
+        current_reward = initial_target - current_price
+        if current_risk > 0:
+            current_rr = current_reward / current_risk
+
     with pa_col1:
-        st.subheader("Where to Buy More? (Averaging)")
-        cost_basis = position_data['cost_basis']
+        st.subheader("Current P/L & R/R")
+        st.metric("Your Avg Cost Basis", f"${cost_basis:,.2f}")
+        st.metric("Current Price", f"${current_price:,.2f}", delta=f"${current_price - cost_basis:,.2f}")
+        
+        if pd.notna(current_rr):
+            st.metric("Current R/R Ratio", f"{current_rr:.2f} R", help="R/R based on current price and *original* SL/TP.")
+            if current_rr < 1.0:
+                st.warning("Warning: Current R/R is unfavorable (< 1.0).")
+        
+    with pa_col2:
+        st.subheader("Trailing Stop Logic (Suggestion)")
+        
+        if pd.notna(initial_risk_per_share) and initial_risk_per_share > 0:
+            one_r_target = cost_basis + initial_risk_per_share
+            st.metric("1R Profit Target", f"${one_r_target:,.2f}", help="Your cost basis + initial risk per share.")
+            
+            if current_price >= one_r_target:
+                # --- Trailing Stop Logic ---
+                atr = ticker_data.get('ATR', np.nan)
+                k_atr = 2.0 # Multiplier (can be from config)
+                
+                if pd.notna(atr):
+                    suggested_trail_stop = current_price - (atr * k_atr)
+                    # Stop should not go down. Max of (new stop) or (cost basis)
+                    final_trail_stop = max(cost_basis, suggested_trail_stop)
+                    
+                    st.success("✅ Price is above 1R target.")
+                    st.metric("Suggested Trailing Stop", f"${final_trail_stop:,.2f}", help=f"Max of (Cost Basis) or (Current Price - {k_atr} * ATR)")
+                else:
+                    st.metric("Suggested Trailing Stop", f"${cost_basis:,.2f}", help="Move stop to Breakeven (ATR data missing).")
+            else:
+                st.info("Price has not hit +1R target. Maintain original stop.")
+                st.metric("Original Stop Loss", f"${initial_stop_loss:,.2f}")
+        else:
+            st.warning("Cannot calculate 1R target (missing initial risk data).")
+
+    with pa_col3:
+        st.subheader("Where to Add? (Averaging)")
+        
         b_ob_low = ticker_data.get('bullish_ob_low', np.nan)
         b_ob_high = ticker_data.get('bullish_ob_high', np.nan)
-        
-        st.metric("Your Cost Basis", f"${cost_basis:,.2f}")
 
         if pd.notna(b_ob_low):
             st.metric("Bullish OB (Demand Zone)", f"${b_ob_low:,.2f} - ${b_ob_high:,.2f}")
@@ -1801,38 +2116,6 @@ def display_position_analysis(position_data, ticker_data):
                 st.success("Your cost basis is already at or below the current Demand Zone. This is a strong position.")
         else:
             st.warning("No clear Demand Zone (Bullish OB) found.")
-
-    with pa_col2:
-        st.subheader("Should I Buy More Now?")
-        st.markdown("Check the 5-step confirmation checklist:")
-        
-        display_buy_signal_checklist(ticker_data)
-        
-        entry_signal = ticker_data.get('entry_signal', 'No Trade')
-        if entry_signal == 'Buy near Bullish OB':
-            st.success("✅ **Confirmation:** The SMC Entry Signal is active now.")
-        else:
-            st.warning("❌ **Wait:** The SMC Entry Signal is NOT active. Consider waiting for a pullback to the Demand Zone.")
-
-    with pa_col3:
-        st.subheader("Exit / P&L Analysis")
-        
-        stop_loss = ticker_data.get('Final Stop Loss', np.nan)
-        be_ob_high = ticker_data.get('bearish_ob_high', np.nan)
-        be_ob_low = ticker_data.get('bearish_ob_low', np.nan)
-
-        if pd.notna(stop_loss):
-            st.metric("Suggested Stop Loss", f"${stop_loss:,.2f}")
-        else:
-            st.metric("Suggested Stop Loss", "N/A")
-            
-        if pd.notna(be_ob_high):
-            st.metric("Supply Zone (Profit Target)", f"${be_ob_low:,.2f} - ${be_ob_high:,.2f}")
-        else:
-            st.metric("Supply Zone (Profit Target)", "N/A")
-            
-        if pd.notna(stop_loss) and cost_basis < stop_loss:
-            st.error("⚠️ **Warning:** Your cost basis is *below* the suggested stop loss. This is a high-risk position.")
 
 
 # --- ⭐️ 6. Scheduler Entry Point ---

@@ -46,7 +46,8 @@
         "ATR_STOP_LOSS_MULTIPLIER": 1.5,
         "ATR_TAKE_PROFIT_MULTIPLIER": 3.0,
         "MAX_POSITION_PERCENTAGE": 0.10,
-        "RISK_PER_TRADE_AMOUNT": 50,
+        "TOTAL_PORTFOLIO_EQUITY": 10000,
+        "RISK_PER_TRADE_PERCENT": 0.005,
         "USE_CUT_LOSS_FILTER": true
     },
     "STATISTICAL": {
@@ -65,7 +66,7 @@
         "Size": 0.10,
         "LowVolatility": 0.15,
         "Technical": 0.15,
-        "QxM": 0.10
+        "QxM": 0.0
     },
     "FACTOR_DEFINITIONS": {
         "Value": {

@@ -26,6 +26,7 @@
         "RSI_WINDOW": 14,
         "SHORT_MA_WINDOW": 50,
         "LONG_MA_WINDOW": 200,
+        "REGIME_VOLATILITY_THRESHOLD": 5.0,
         "MACD_SHORT_SPAN": 12,
         "MACD_LONG_SPAN": 26,
         "MACD_SIGNAL_SPAN": 9,

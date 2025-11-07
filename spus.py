@@ -38,6 +38,7 @@ SPUS Quantitative Analyzer v19.10 (Force v1 API)
 - ✅ MODIFIED (P4): AI function call moved to streamlit_app.py
   for on-demand (lazy) loading to reduce API costs.
 - ✅ MODIFIED (P4): parse_ticker_data now sets 'ai_holistic_analysis' to None.
+- ✅ MODIFIED (P5): Added check for placeholder API key.
 """
 
 import requests
@@ -453,16 +454,20 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         }
         return ob_data_default
 
-# --- ✅ MODIFIED (P4): Replaced Gemini with OpenAI ---
+# --- ✅ MODIFIED (P5): Added check for placeholder key ---
 def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG):
     """
     Takes all parsed data and news, sending them to OpenAI API for a holistic summary.
     This function is now called ON-DEMAND from streamlit_app.py.
     """
     api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
-    if not api_key or api_key.startswith("sk-YOUR_ACTUAL_API_KEY"):
+    
+    # --- THIS IS THE NEW CHECK ---
+    # It checks for None, the placeholder in config.json, and the default template string
+    if not api_key or api_key == "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
         logging.warning(f"[{ticker_symbol}] OpenAI API Key not configured. Skipping AI summary.")
         return "N/A (AI Summary Disabled: API Key Missing)"
+    # --- END OF NEW CHECK ---
 
     try:
         client = OpenAI(api_key=api_key)

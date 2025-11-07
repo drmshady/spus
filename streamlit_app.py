@@ -802,7 +802,7 @@ def display_buy_signal_checklist(ticker_data):
     criteria = [
         (step1_met, step1_text, step1_details),
         (step2_met, step2_text, step2_details),
-        (step3_met, step_3_text, step3_details),
+       (step3_met, step3_text, step3_details),
         (step4_met, step4_text, step4_details),
         (step5_met, step5_text, step5_details)
     ]

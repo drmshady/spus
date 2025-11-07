@@ -939,8 +939,10 @@ def run_market_analyzer_app(config_file_name):
         st.subheader("Stock Analyzer")
         new_ticker = st.text_input("Analyze Single Ticker:", placeholder="e.g., MSFT or 1120.SR").upper().strip()
         
-        if st.button("Analyze and Deep Dive"):
-            if new_ticker:
+        # --- ✅ MODIFIED (Suggestion #5): Debounce button ---
+        # Button is disabled if new_ticker is an empty string
+        if st.button("Analyze and Deep Dive", disabled=(not new_ticker)):
+            if new_ticker: # This check is now slightly redundant but good practice
                 if 'raw_df' not in st.session_state:
                     st.warning("Priming data... please click 'Analyze' again.")
                     st.rerun() 
@@ -978,16 +980,18 @@ def run_market_analyzer_app(config_file_name):
                                 st.error(f"Failed to fetch data for {new_ticker}. Error: {result.get('error', 'Unknown')}")
                         except Exception as e:
                             st.error(f"An exception occurred while processing {new_ticker}: {e}")
-            else:
-                st.warning("Please enter a ticker symbol.")
+            # This 'else' is no longer reachable due to the 'disabled' check
+            # else:
+            #     st.warning("Please enter a ticker symbol.")
         
         st.divider()
 
         # --- ✅ MODIFIED (P3): Added 'QxM' to default weights ---
+        # --- ✅ MODIFIED (Suggestion #1): QxM weight now defaults to 0 from config
         default_weights = CONFIG.get('DEFAULT_FACTOR_WEIGHTS', {
             "Value": 0.20, "Momentum": 0.15, "Quality": 0.15,
             "Size": 0.10, "LowVolatility": 0.15, "Technical": 0.15,
-            "QxM": 0.10 # <-- New Factor Weight (example)
+            "QxM": 0.10 # <-- This default is overridden by config.json
         })
         
         def callback_reset_weights():
@@ -1376,7 +1380,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     """
     Helper function to display the full Ticker Deep Dive page.
     --- ✅ MODIFIED: Accepts CONFIG ---
-    --- ✅ MODIFIED (P4): Calls AI On-Demand ---
+    --- ✅ MODIFIED (Suggestion #4): Calls AI On-Demand via button ---
     """
     selected_ticker = ticker_data.name
     
@@ -1437,13 +1441,12 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     st.divider()
 
-    # --- ✅ MODIFIED (P4): On-Demand AI Summary (OpenAI) ---
+    # --- ✅ MODIFIED (Suggestion #4): On-Demand AI Summary via Button ---
     st.subheader("🤖 AI-Powered Deep Dive")
     cache_key = f"ai_summary_{selected_ticker}"
     
-    # Check if we already generated this summary
-    if cache_key not in st.session_state:
-        # If not, generate it and cache it
+    if st.button(f"🧠 Generate AI Analysis for {selected_ticker}"):
+        # If button is clicked, generate summary and cache it
         with st.spinner(f"Generating AI analysis for {selected_ticker}... This may take a moment."):
             try:
                 # Get the data needed for the prompt
@@ -1464,8 +1467,11 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
                 st.error(f"Failed to generate AI summary: {e}")
                 st.session_state[cache_key] = "AI Summary generation failed."
     
-    # Display the summary (either freshly generated or from cache)
-    st.markdown(st.session_state[cache_key], unsafe_allow_html=True)
+    # Display the summary (if it exists in cache)
+    if cache_key in st.session_state:
+        st.markdown(st.session_state[cache_key], unsafe_allow_html=True)
+    else:
+        st.info("Click the button above to generate an AI-powered summary.")
     # --- END OF MODIFICATION ---
     
     # --- Raw News Headlines ---
@@ -1542,7 +1548,9 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     with risk_col3:
         pos_shares = ticker_data.get('Position Size (Shares)', np.nan)
         pos_display = f"{pos_shares:.0f} Shares" if pd.notna(pos_shares) else "N/A"
-        risk_usd = ticker_data.get('Risk Per Trade (USD)', 50)
+        
+        # --- ✅ MODIFIED (Suggestion #3): Read from config
+        risk_usd = ticker_data.get('Risk Per Trade (USD)', CONFIG.get('RISK_MANAGEMENT', {}).get('TOTAL_PORTFOLIO_EQUITY', 10000) * CONFIG.get('RISK_MANAGEMENT', {}).get('RISK_PER_TRADE_PERCENT', 0.005))
         st.metric("Position Size (Shares)", pos_display, help=f"Based on ${risk_usd:,.0f} risk")
     
     with risk_col4:
@@ -1574,7 +1582,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     be_ob_label = f"{'✅ Mitigated' if be_ob_validated else 'Fresh'} Bearish OB"
     be_ob_display = f"${be_ob_high:.2f} - ${be_ob_low:.2f}" if pd.notna(be_ob_low) else "N/A"
-    be_ob_help = f"FVG: {'Yes' if b_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
+    be_ob_help = f"FVG: {'Yes' if be_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
     zone_cols[1].metric(be_ob_label, be_ob_display, help=be_ob_help)
     
     support = ticker_data.get('last_swing_low', np.nan)

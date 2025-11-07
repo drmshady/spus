@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SPUS Quantitative Analyzer v19.10 (Force v1 API)
+SPUS Quantitative Analyzer v19.12 (Force v1 API)
 
 - Implements data fallbacks (Alpha Vantage) and validation.
 - Fetches a wide range of metrics for 6-factor modeling.
@@ -37,8 +37,12 @@ SPUS Quantitative Analyzer v19.10 (Force v1 API)
 - ✅ MODIFIED (P4): Replaced Google Gemini with OpenAI (ChatGPT).
 - ✅ MODIFIED (P4): AI function call moved to streamlit_app.py
   for on-demand (lazy) loading to reduce API costs.
-- ✅ MODIFIED (P4): parse_ticker_data now sets 'ai_holistic_analysis' to None.
 - ✅ MODIFIED (P5): Added check for placeholder API key.
+- ✅ MODIFIED (USER REQ): Changed default AI model to gpt-4o-mini
+- ✅ ADDED (USER REQ): Retry logic for fetch_data_yfinance
+- ✅ ADDED (USER REQ): Retry logic for fetch_data_alpha_vantage
+- ✅ ADDED (USER REQ): Volatility gate (ATR % > X) in check_market_regime
+- ✅ ADDED (USER REQ): Dynamic risk % (from equity) in parse_ticker_data
 """
 
 import requests
@@ -214,19 +218,23 @@ def fetch_market_tickers(CONFIG):
     return list(set(tickers)) # Return unique list
 
 
-# --- ✅ NEW (P1): Market Regime Filter ---
+# --- ✅ MODIFIED (USER REQ): Added Volatility Gate ---
 def check_market_regime(CONFIG):
     """
     Checks the trend of the primary market index (e.g., S&P 500/TASI).
     Returns 'BULLISH', 'BEARISH', or 'TRANSITIONAL'.
+    Includes a volatility gate to override trend in choppy markets.
     """
     try:
         # Get index ticker from config, default to ^GSPC
         index_ticker = CONFIG.get("MARKET_INDEX_TICKER", "^GSPC") 
         
         # Get MA windows from config
-        short_ma_window = CONFIG.get('TECHNICALS', {}).get('SHORT_MA_WINDOW', 50)
-        long_ma_window = CONFIG.get('TECHNICALS', {}).get('LONG_MA_WINDOW', 200)
+        tech_config = CONFIG.get('TECHNICALS', {})
+        short_ma_window = tech_config.get('SHORT_MA_WINDOW', 50)
+        long_ma_window = tech_config.get('LONG_MA_WINDOW', 200)
+        atr_window = tech_config.get('ATR_WINDOW', 14)
+        vol_threshold = tech_config.get('REGIME_VOLATILITY_THRESHOLD', 5.0) # e.g., 5.0%
 
         index_obj = yf.Ticker(index_ticker)
         # Fetch slightly more than 1y to ensure 200MA is calculated
@@ -235,11 +243,26 @@ def check_market_regime(CONFIG):
         if hist.empty or len(hist) < long_ma_window:
             logging.warning(f"Could not fetch sufficient history for market index {index_ticker}")
             return "UNKNOWN" # Failsafe: allow run if index data is missing
-
+        
+        # --- 1. Volatility Gate Check ---
+        hist.ta.atr(length=atr_window, append=True)
+        atr_col = f'ATRr_{atr_window}'
+        
+        if atr_col in hist.columns:
+            last_price = hist['Close'].iloc[-1]
+            last_atr = hist[atr_col].iloc[-1]
+            
+            if pd.notna(last_price) and pd.notna(last_atr) and last_price > 0:
+                volatility_pct = (last_atr / last_price) * 100
+                if volatility_pct > vol_threshold:
+                    logging.warning(f"Market Regime for {index_ticker} is VOLATILE (ATR {volatility_pct:.2f}% > {vol_threshold}%). Forcing TRANSITIONAL.")
+                    return "TRANSITIONAL"
+        
+        # --- 2. Trend Check (if volatility is acceptable) ---
         hist[f'SMA_{short_ma_window}'] = hist['Close'].rolling(window=short_ma_window).mean()
         hist[f'SMA_{long_ma_window}'] = hist['Close'].rolling(window=long_ma_window).mean()
 
-        last_price = hist['Close'].iloc[-1]
+        last_price = hist['Close'].iloc[-1] # Already defined, but good for clarity
         last_short_ma = hist[f'SMA_{short_ma_window}'].iloc[-1]
         last_long_ma = hist[f'SMA_{long_ma_window}'].iloc[-1]
 
@@ -254,7 +277,7 @@ def check_market_regime(CONFIG):
         else:
             regime = "TRANSITIONAL"
             
-        logging.info(f"Market Regime for {index_ticker} is {regime}")
+        logging.info(f"Market Regime for {index_ticker} is {regime} (Volatility OK)")
         return regime
 
     except Exception as e:
@@ -526,7 +549,7 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
 
         # 4. Call the API
         completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # You can change this to gpt-4 if preferred
+            model="gpt-4o-mini", # <-- ✅ MODIFIED (USER REQ)
             messages=[
                 {"role": "system", "content": "You are a helpful stock market analyst providing summaries in Arabic."},
                 {"role": "user", "content": prompt}
@@ -543,33 +566,41 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
         logging.error(f"[{ticker_symbol}] Error calling OpenAI API: {e}")
         return f"N/A (AI Summary Error: {e})"
 
-# --- ✅ MODIFIED FUNCTION (Accepts CONFIG) ---
+# --- ✅ MODIFIED (USER REQ): Added Retry Logic ---
 def fetch_data_yfinance(ticker_obj, CONFIG):
-    """Fetches history and info from yfinance."""
-    try:
-        hist = ticker_obj.history(period=CONFIG.get("HISTORICAL_DATA_PERIOD", "5y"))
-        info = ticker_obj.info
-        
-        # Add earnings data
-        earnings = {
-            "earnings": ticker_obj.income_stmt,
-            "quarterly_earnings": ticker_obj.quarterly_income_stmt,
-            "calendar": ticker_obj.calendar,
-            "news": ticker_obj.get_news() # <-- ✅ NEWS FIX
-        }
-        
-        if hist.empty or info is None:
-            logging.warning(f"[{ticker_obj.ticker}] yfinance returned empty history or info.")
-            return None
+    """Fetches history and info from yfinance with retry logic."""
+    retries = 3
+    for attempt in range(retries):
+        try:
+            hist = ticker_obj.history(period=CONFIG.get("HISTORICAL_DATA_PERIOD", "5y"))
+            info = ticker_obj.info
             
-        return {"hist": hist, "info": info, "earnings_data": earnings, "source": "yfinance"}
-    except Exception as e:
-        logging.error(f"[{ticker_obj.ticker}] yfinance data fetch error: {e}")
-        return None
+            # Add earnings data
+            earnings = {
+                "earnings": ticker_obj.income_stmt,
+                "quarterly_earnings": ticker_obj.quarterly_income_stmt,
+                "calendar": ticker_obj.calendar,
+                "news": ticker_obj.get_news() # <-- ✅ NEWS FIX
+            }
+            
+            if hist.empty or info is None:
+                logging.warning(f"[{ticker_obj.ticker}] yfinance returned empty history or info (Attempt {attempt + 1}).")
+                # Don't retry on empty data, yfinance responded successfully
+                return None 
+                
+            return {"hist": hist, "info": info, "earnings_data": earnings, "source": "yfinance"}
+        
+        except Exception as e:
+            logging.error(f"[{ticker_obj.ticker}] yfinance data fetch error (Attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(1) # 1 second backoff
+            else:
+                return None # Failed all retries
+    return None
 
-# --- ✅ MODIFIED FUNCTION (Accepts CONFIG) ---
+# --- ✅ MODIFIED (USER REQ): Added Retry Logic ---
 def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
-    """Fallback data provider: Alpha Vantage."""
+    """Fallback data provider: Alpha Vantage with retry logic."""
     if not api_key or api_key == "YOUR_API_KEY_1": # Check against a default placeholder
         logging.warning(f"[{ticker}] Alpha Vantage API key ('{api_key}') is not set. Skipping fallback.")
         return None
@@ -578,85 +609,99 @@ def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
     base_url = "https://www.alphavantage.co/query"
     hist_data = None
     info_data = None
+    news_list = []
 
-    try:
-        # 1. Fetch History
-        hist_params = {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": ticker,
-            "outputsize": "full",
-            "apikey": api_key
-        }
-        response = requests.get(base_url, params=hist_params, timeout=10)
-        response.raise_for_status()
-        hist_json = response.json()
-        
-        if "Time Series (Daily)" in hist_json:
-            hist_data = pd.DataFrame.from_dict(hist_json["Time Series (Daily)"], orient='index')
-            hist_data.index = pd.to_datetime(hist_data.index)
-            hist_data = hist_data.astype(float)
-            hist_data.rename(columns={
-                '1. open': 'Open',
-                '2. high': 'High',
-                '3. low': 'Low',
-                '4. close': 'Close',
-                '5. adjusted close': 'Adj Close',
-                '6. volume': 'Volume'
-            }, inplace=True)
-            hist_data = hist_data.sort_index()
-            hist_data['Dividends'] = 0.0
-            hist_data['Stock Splits'] = 0.0
-        else:
-            logging.warning(f"[{ticker}] AV History fetch warning: {hist_json.get('Note') or hist_json.get('Error Message')}")
-
-        # 2. Fetch Info
-        info_params = {"function": "OVERVIEW", "symbol": ticker, "apikey": api_key}
-        response = requests.get(base_url, params=info_params, timeout=10)
-        response.raise_for_status()
-        info_data = response.json()
-        if not info_data or "Symbol" not in info_data:
-             logging.warning(f"[{ticker}] AV Info fetch warning: {info_data.get('Note') or info_data.get('Error Message')}")
-             info_data = None
-
-        # 3. Fetch News & Sentiment
-        news_list = [] # Default
+    retries = 3
+    for attempt in range(retries):
         try:
-            news_params = {
-                "function": "NEWS_SENTIMENT",
-                "tickers": ticker,
-                "limit": 10, # Get 10 recent articles
+            # 1. Fetch History
+            hist_params = {
+                "function": "TIME_SERIES_DAILY_ADJUSTED",
+                "symbol": ticker,
+                "outputsize": "full",
                 "apikey": api_key
             }
-            response = requests.get(base_url, params=news_params, timeout=10)
-            response.raise_for_status()
-            news_data = response.json()
+            response_hist = requests.get(base_url, params=hist_params, timeout=10)
+            response_hist.raise_for_status()
+            hist_json = response_hist.json()
             
-            if "feed" in news_data:
-                for item in news_data["feed"]:
-                    try:
-                        # Convert AV time format 'YYYYMMDDTHHMMSS' to a timestamp
-                        publish_time = datetime.strptime(item.get('time_published'), '%Y%m%dT%H%M%S')
-                        publish_timestamp = int(publish_time.timestamp())
-                    except Exception:
-                        publish_timestamp = 0
-                        
-                    news_list.append({
-                        'title': item.get('title'),
-                        'providerPublishTime': publish_timestamp 
-                    })
+            if "Time Series (Daily)" in hist_json:
+                hist_data = pd.DataFrame.from_dict(hist_json["Time Series (Daily)"], orient='index')
+                hist_data.index = pd.to_datetime(hist_data.index)
+                hist_data = hist_data.astype(float)
+                hist_data.rename(columns={
+                    '1. open': 'Open',
+                    '2. high': 'High',
+                    '3. low': 'Low',
+                    '4. close': 'Close',
+                    '5. adjusted close': 'Adj Close',
+                    '6. volume': 'Volume'
+                }, inplace=True)
+                hist_data = hist_data.sort_index()
+                hist_data['Dividends'] = 0.0
+                hist_data['Stock Splits'] = 0.0
             else:
-                logging.warning(f"[{ticker}] AV news fetch warning: {news_data.get('Note') or news_data.get('Error Message')}")
+                logging.warning(f"[{ticker}] AV History fetch warning: {hist_json.get('Note') or hist_json.get('Error Message')}")
+                if 'Note' in hist_json: # API limit
+                    time.sleep(15) # Longer sleep for API limits
+                    continue # Retry
 
+            # 2. Fetch Info
+            info_params = {"function": "OVERVIEW", "symbol": ticker, "apikey": api_key}
+            response_info = requests.get(base_url, params=info_params, timeout=10)
+            response_info.raise_for_status()
+            info_data = response_info.json()
+            if not info_data or "Symbol" not in info_data:
+                 logging.warning(f"[{ticker}] AV Info fetch warning: {info_data.get('Note') or info_data.get('Error Message')}")
+                 if 'Note' in info_data: # API limit
+                     time.sleep(15) # Longer sleep for API limits
+                     continue # Retry
+                 info_data = None
+
+            # 3. Fetch News & Sentiment
+            try:
+                news_params = {
+                    "function": "NEWS_SENTIMENT",
+                    "tickers": ticker,
+                    "limit": 10, # Get 10 recent articles
+                    "apikey": api_key
+                }
+                response_news = requests.get(base_url, params=news_params, timeout=10)
+                response_news.raise_for_status()
+                news_data = response_news.json()
+                
+                if "feed" in news_data:
+                    for item in news_data["feed"]:
+                        try:
+                            publish_time = datetime.strptime(item.get('time_published'), '%Y%m%dT%H%M%S')
+                            publish_timestamp = int(publish_time.timestamp())
+                        except Exception:
+                            publish_timestamp = 0
+                        news_list.append({
+                            'title': item.get('title'),
+                            'providerPublishTime': publish_timestamp 
+                        })
+                else:
+                    logging.warning(f"[{ticker}] AV news fetch warning: {news_data.get('Note') or news_data.get('Error Message')}")
+            except Exception as e:
+                logging.warning(f"[{ticker}] Failed to fetch Alpha Vantage news: {e}")
+                # Don't fail the whole function, just return no news
+
+            # If we got here, all requests succeeded
+            break # Exit retry loop
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[{ticker}] Alpha Vantage request error (Attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(1) # 1 second backoff
+            else:
+                return None # Failed all retries
         except Exception as e:
-            logging.warning(f"[{ticker}] Failed to fetch Alpha Vantage news: {e}")
-            # Don't fail the whole function, just return no news
-
-    except requests.exceptions.RequestException as e:
-        logging.error(f"[{ticker}] Alpha Vantage request error: {e}")
-        return None
-    except Exception as e:
-        logging.error(f"[{ticker}] Alpha Vantage processing error: {e}")
-        return None
+            logging.error(f"[{ticker}] Alpha Vantage processing error (Attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(1)
+            else:
+                return None # Failed all retries
 
     if hist_data is not None and info_data is not None:
         return {
@@ -667,6 +712,7 @@ def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
         }
     else:
         return None
+
 
 def is_data_valid(data, source="yfinance"):
     """
@@ -1069,14 +1115,23 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
              parsed['next_ex_dividend_date'] = str(info.get('ExDividendDate', 'N/A (AV)'))
 
         # --- 8. Risk Management ---
-        # --- ✅ MODIFIED (P2): Exit Rule Logic ---
         
         rm_config = CONFIG.get('RISK_MANAGEMENT', {})
         atr_sl_mult = rm_config.get('ATR_STOP_LOSS_MULTIPLIER', 1.5)
-        # --- Use Fib 1.618 as a fallback if ATR_TAKE_PROFIT_MULTIPLIER is not in config ---
         fib_target_mult = rm_config.get('ATR_TAKE_PROFIT_MULTIPLIER', 1.618) 
-        risk_per_trade_usd = rm_config.get('RISK_PER_TRADE_AMOUNT', 500)
         use_cut_loss_filter = rm_config.get('USE_CUT_LOSS_FILTER', True)
+
+        # --- MODIFIED (USER REQ): Dynamic Risk Calculation ---
+        total_equity = rm_config.get('TOTAL_EQUITY', None)
+        risk_percent = rm_config.get('RISK_PERCENT_PER_TRADE', 0.005) # 0.5% default
+        default_risk_amount = rm_config.get('RISK_PER_TRADE_AMOUNT', 500) # Fallback
+
+        risk_per_trade_usd = np.nan
+        if total_equity and total_equity > 0:
+            risk_per_trade_usd = total_equity * risk_percent
+        else:
+            risk_per_trade_usd = default_risk_amount
+        # --- END OF MODIFICATION ---
         
         atr = parsed.get('ATR')
         last_price = parsed.get('last_price')
@@ -1172,7 +1227,7 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
             parsed['Risk % (to Stop)'] = float((risk_per_share / last_price) * 100) if last_price != 0 else np.nan
             parsed['Position Size (Shares)'] = float(position_size_shares)
             parsed['Position Size (USD)'] = float(position_size_usd)
-            parsed['Risk Per Trade (USD)'] = float(risk_per_trade_usd)
+            parsed['Risk Per Trade (USD)'] = float(risk_per_trade_usd) # <-- Now dynamic
         else:
             parsed['Stop Loss Price'] = np.nan
             parsed['Final Stop Loss'] = np.nan
@@ -1181,7 +1236,7 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
             parsed['Risk % (to Stop)'] = np.nan
             parsed['Position Size (Shares)'] = np.nan
             parsed['Position Size (USD)'] = np.nan
-            parsed['Risk Per Trade (USD)'] = float(risk_per_trade_usd)
+            parsed['Risk Per Trade (USD)'] = float(risk_per_trade_usd) # <-- Now dynamic
         
         if 'Stop Loss (ATR)' not in parsed:
             parsed['Stop Loss (ATR)'] = np.nan
@@ -1247,7 +1302,7 @@ def process_ticker(ticker, CONFIG):
         
     # 1. Attempt yfinance
     ticker_obj = yf.Ticker(ticker)
-    yf_data = fetch_data_yfinance(ticker_obj, CONFIG)
+    yf_data = fetch_data_yfinance(ticker_obj, CONFIG) # <-- Now has retries
     
     hist_df_for_storage = yf_data.get('hist') if yf_data else None
     
@@ -1267,7 +1322,7 @@ def process_ticker(ticker, CONFIG):
             av_data = None
         else:
             selected_av_key = random.choice(av_keys_list)
-            av_data = fetch_data_alpha_vantage(ticker, selected_av_key, CONFIG)
+            av_data = fetch_data_alpha_vantage(ticker, selected_av_key, CONFIG) # <-- Now has retries
         
         if is_data_valid(av_data, source="alpha_vantage"):
             data_to_parse = av_data

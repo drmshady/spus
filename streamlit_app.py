@@ -802,7 +802,7 @@ def display_buy_signal_checklist(ticker_data):
     criteria = [
         (step1_met, step1_text, step1_details),
         (step2_met, step2_text, step2_details),
-        (step3_met, step3_text, step3_details),
+        (step3_met, step_3_text, step3_details),
         (step4_met, step4_text, step4_details),
         (step5_met, step5_text, step5_details)
     ]
@@ -1782,7 +1782,7 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
         # Check for pre-fill from Deep Dive tab
         prefill = st.session_state.prefill_transaction
         default_ticker = prefill['ticker'] if prefill else ""
-        default_price = prefill['price'] if prefill else 0.0
+        default_price = prefill['price'] if prefill else None # <-- ✅ BUG FIX 1
         
         with st.form("add_transaction_form"):
             form_col1, form_col2, form_col3, form_col4, form_col5 = st.columns(5)
@@ -1791,13 +1791,15 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
             tx_ticker = form_col2.text_input("Ticker Symbol", value=default_ticker).upper().strip()
             tx_type = form_col3.selectbox("Type", ["Buy", "Sell"])
             tx_shares = form_col4.number_input("Shares", min_value=0.0, step=1.0)
-            tx_price = form_col5.number_input("Price", min_value=0.01, value=default_price, format="%.2f")
+            # --- ✅ BUG FIX 1 (continued): Use placeholder when value is None ---
+            tx_price = form_col5.number_input("Price", min_value=0.01, value=default_price, format="%.2f", placeholder="0.00")
             tx_notes = st.text_input("Notes (e.g., 'SMC Entry', 'Averaging down')")
             
             submitted = st.form_submit_button("Add Transaction")
             
             if submitted:
-                if not tx_ticker or tx_shares == 0 or tx_price == 0:
+                # --- ✅ BUG FIX 2: Check for None or 0 ---
+                if not tx_ticker or tx_shares == 0 or (tx_price is None or tx_price <= 0):
                     st.error("Please fill out all fields (Ticker, Shares, Price).")
                 elif tx_ticker not in all_data_df.index:
                     st.error(f"Ticker '{tx_ticker}' not found. Run a 'Deep Dive' for it first from the sidebar.")

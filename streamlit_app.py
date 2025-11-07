@@ -508,10 +508,11 @@ def load_analysis_data(config_file_name, run_timestamp):
         
     logging.info(f"Cache miss or manual run. Running full analysis for {config_file_name}... (Timestamp: {run_timestamp})")
     
-    # Load the *correct* config
-    _CONFIG = load_config(config_file_name)
+    # --- ✅ MODIFIED (P5): Config is now loaded from session state ---
+    # The config is already loaded and modified in run_market_analyzer_app
+    _CONFIG = st.session_state.get('CONFIG')
     if _CONFIG is None:
-        st.error(f"Failed to load {config_file_name}")
+        st.error(f"Failed to load CONFIG from session state in load_analysis_data.")
         return None, None, None, None, None
     
     df, histories, sheets, market_regime = generate_quant_report(_CONFIG, st_progress_callback)
@@ -814,14 +815,39 @@ def display_buy_signal_checklist(ticker_data):
 def run_market_analyzer_app(config_file_name):
 
     # --- Load Config & CSS ---
-    # --- ✅ MODIFIED (P4): Store CONFIG in session state for on-demand AI calls
+    # --- ✅ MODIFIED (P5): Inject API key from st.secrets ---
     if 'CONFIG' not in st.session_state:
-        st.session_state.CONFIG = load_config(config_file_name)
-    
+        # 1. Load the base config from the file
+        config_data = load_config(config_file_name)
+        
+        if config_data is None:
+            st.error(f"FATAL: {config_file_name} not found or corrupted. App cannot start.")
+            st.stop()
+        
+        # 2. Try to get the API key from Streamlit secrets
+        try:
+            # This checks for the key in st.secrets (for cloud deployment)
+            api_key = st.secrets.get("OPENAI_API_KEY")
+            if api_key:
+                # 3. Inject the key into the config object
+                if "DATA_PROVIDERS" not in config_data:
+                        config_data["DATA_PROVIDERS"] = {}
+                config_data["DATA_PROVIDERS"]["OPENAI_API_KEY"] = api_key
+                logging.info("Successfully injected OpenAI API key from st.secrets.")
+            else:
+                logging.warning("OPENAI_API_KEY not found in Streamlit secrets. AI features will fail.")
+        except Exception as e:
+            # This handles cases where st.secrets might not be available (e.g., local run without secrets file)
+            logging.warning(f"Could not access Streamlit secrets. AI features will fail. Error: {e}")
+
+        # 4. Store the modified config in session state
+        st.session_state.CONFIG = config_data
+
     CONFIG = st.session_state.CONFIG
-    if CONFIG is None:
-        st.error(f"FATAL: {config_file_name} not found or corrupted. App cannot start.")
+    if CONFIG is None: 
+        st.error(f"FATAL: Config is None even after loading. App cannot start.")
         st.stop()
+    # --- END OF MODIFICATION ---
     
     load_css()
     
@@ -1821,10 +1847,27 @@ def run_analysis_for_scheduler():
     def print_progress_callback(percent, text):
         print(f"[{percent*100:.0f}%] {text}")
     
-    CONFIG = load_config(config_file_name) # Load the specified config
+    # --- ✅ MODIFIED (P5): Inject secrets for scheduled run ---
+    # Note: Scheduled runs on Streamlit Cloud must have secrets set in the environment.
+    CONFIG = load_config(config_file_name) 
     if CONFIG is None:
         print(f"FATAL: Could not load {config_file_name}. Exiting.")
         return
+        
+    try:
+        # Scheduled runs on Streamlit Cloud can't use st.secrets.
+        # You must set OPENAI_API_KEY as an environment variable.
+        api_key_env = os.environ.get("OPENAI_API_KEY")
+        if api_key_env:
+            if "DATA_PROVIDERS" not in CONFIG:
+                CONFIG["DATA_PROVIDERS"] = {}
+            CONFIG["DATA_PROVIDERS"]["OPENAI_API_KEY"] = api_key_env
+            print("Successfully injected OpenAI API key from environment variable.")
+        else:
+            print("Warning: OPENAI_API_KEY environment variable not set. AI features will fail.")
+    except Exception as e:
+        print(f"Error injecting env var key: {e}")
+    # --- END OF MODIFICATION ---
         
     log_file_path = os.path.join(BASE_DIR, CONFIG.get('LOGGING', {}).get('LOG_FILE_PATH', 'spus_analysis.log'))
     logging.basicConfig(

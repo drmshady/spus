@@ -23,7 +23,7 @@ from collections import deque # For FIFO
 # --- ⭐️ 1. Set Page Configuration FIRST ⭐️ ---
 st.set_page_config(
     page_title="Multi-Market Quant Analyzer",
-    page_icon="https.www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", 
+    page_icon="https://www.sp-funds.com/wp-content/uploads/2019/07/favicon-32x32.png", 
     layout="wide"
 )
 
@@ -67,7 +67,7 @@ def load_css():
     """Injects custom CSS for a modern, minimal, card-based theme."""
     st.markdown(f"""
     <style>
-        @import url('https.fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {{
             font-family: 'Inter', sans-serif;
         }}
@@ -820,8 +820,6 @@ def run_market_analyzer_app(config_file_name):
 
     # --- Load Config & CSS ---
     # --- ✅ MODIFIED (P5): Inject API key from st.secrets ---
-   # In streamlit_app (5).py, inside run_market_analyzer_app:
-
     if 'CONFIG' not in st.session_state:
         # 1. Load the base config from the file
         config_data = load_config(config_file_name)
@@ -831,43 +829,26 @@ def run_market_analyzer_app(config_file_name):
             st.stop()
         
         # 2. Inject API keys from Streamlit secrets
-        if "DATA_PROVIDERS" not in config_data:
-            config_data["DATA_PROVIDERS"] = {}
-        
-        # Inject Gemini API Key (Primary)
-        gemini_api_key = st.secrets.get("GEMINI_API_KEY")
-        if gemini_api_key:
-            config_data["DATA_PROVIDERS"]["GEMINI_API_KEY"] = gemini_api_key
-            logging.info("Successfully injected GEMINI API key from st.secrets.")
-        else:
-            logging.warning("GEMINI_API_KEY not found in Streamlit secrets. Gemini features will fail.")
-
-        # Inject OpenAI API Key (Fallback)
-        openai_api_key = st.secrets.get("OPENAI_API_KEY")
-        if openai_api_key:
-            config_data["DATA_PROVIDERS"]["OPENAI_API_KEY"] = openai_api_key
-            logging.info("Successfully injected OpenAI API key from st.secrets.")
-        else:
-            logging.warning("OPENAI_API_KEY not found in Streamlit secrets. OpenAI features will fail.")
-
-        # 3. Store the modified config in session state
-        st.session_state.CONFIG = config_data
-
-    CONFIG = st.session_state.CONFIG
-# ... rest of run_market_analyzer_app continues ...
-        
-        # 2. Try to get the API key from Streamlit secrets
         try:
-            # This checks for the key in st.secrets (for cloud deployment)
-            api_key = st.secrets.get("OPENAI_API_KEY")
-            if api_key:
-                # 3. Inject the key into the config object
-                if "DATA_PROVIDERS" not in config_data:
-                        config_data["DATA_PROVIDERS"] = {}
-                config_data["DATA_PROVIDERS"]["OPENAI_API_KEY"] = api_key
+            if "DATA_PROVIDERS" not in config_data:
+                config_data["DATA_PROVIDERS"] = {}
+            
+            # Inject Gemini API Key (Primary)
+            gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+            if gemini_api_key:
+                config_data["DATA_PROVIDERS"]["GEMINI_API_KEY"] = gemini_api_key
+                logging.info("Successfully injected GEMINI API key from st.secrets.")
+            else:
+                logging.warning("GEMINI_API_KEY not found in Streamlit secrets. Gemini features will fail.")
+
+            # Inject OpenAI API Key (Fallback)
+            openai_api_key = st.secrets.get("OPENAI_API_KEY")
+            if openai_api_key:
+                config_data["DATA_PROVIDERS"]["OPENAI_API_KEY"] = openai_api_key
                 logging.info("Successfully injected OpenAI API key from st.secrets.")
             else:
-                logging.warning("OPENAI_API_KEY not found in Streamlit secrets. AI features will fail.")
+                logging.warning("OPENAI_API_KEY not found in Streamlit secrets. OpenAI features will fail.")
+            
         except Exception as e:
             # This handles cases where st.secrets might not be available (e.g., local run without secrets file)
             logging.warning(f"Could not access Streamlit secrets. AI features will fail. Error: {e}")
@@ -1668,6 +1649,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
 
 # --- ✅ NEW (USER REQ): Portfolio v2 (Transaction Log) ---
 def process_transactions(transactions, all_data_df):
+# ... (unchanged)
     """
     Processes a list of transactions to calculate open positions and realized P/L using FIFO.
     """
@@ -1810,7 +1792,7 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
         # Check for pre-fill from Deep Dive tab
         prefill = st.session_state.prefill_transaction
         default_ticker = prefill['ticker'] if prefill else ""
-        default_price = prefill['price'] if prefill else None # <-- ✅ BUG FIX 1
+        default_price = prefill['price'] if prefill else None 
         
         with st.form("add_transaction_form"):
             form_col1, form_col2, form_col3, form_col4, form_col5 = st.columns(5)
@@ -1819,7 +1801,6 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
             tx_ticker = form_col2.text_input("Ticker Symbol", value=default_ticker).upper().strip()
             tx_type = form_col3.selectbox("Type", ["Buy", "Sell"])
             tx_shares = form_col4.number_input("Shares", min_value=0.0, step=1.0)
-            # --- ✅ BUG FIX 1 (continued): Use placeholder when value is None ---
             tx_price = form_col5.number_input("Price", min_value=0.01, value=default_price, format="%.2f", placeholder="0.00")
             tx_notes = st.text_input("Notes (e.g., 'SMC Entry', 'Averaging down')")
             
@@ -2076,6 +2057,7 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
 
 # --- ✅ NEW (USER REQ): Position Analysis v2 (with Trailing Stop) ---
 def display_position_analysis_v2(position_data, ticker_data, CONFIG):
+# ... (unchanged)
     
     pa_col1, pa_col2, pa_col3 = st.columns(3)
     
@@ -2151,6 +2133,7 @@ def display_position_analysis_v2(position_data, ticker_data, CONFIG):
 # --- ⭐️ 6. Scheduler Entry Point ---
 
 def run_analysis_for_scheduler():
+# ... (unchanged)
     """
     Function to be called by an external scheduler (e.g., cron).
     --- ✅ MODIFIED: Accepts config file as argument ---
@@ -2178,14 +2161,25 @@ def run_analysis_for_scheduler():
     try:
         # Scheduled runs on Streamlit Cloud can't use st.secrets.
         # You must set OPENAI_API_KEY as an environment variable.
-        api_key_env = os.environ.get("OPENAI_API_KEY")
-        if api_key_env:
-            if "DATA_PROVIDERS" not in CONFIG:
-                CONFIG["DATA_PROVIDERS"] = {}
-            CONFIG["DATA_PROVIDERS"]["OPENAI_API_KEY"] = api_key_env
+        # Check both Gemini and OpenAI keys
+        gemini_api_key_env = os.environ.get("GEMINI_API_KEY")
+        openai_api_key_env = os.environ.get("OPENAI_API_KEY")
+        
+        if "DATA_PROVIDERS" not in CONFIG:
+            CONFIG["DATA_PROVIDERS"] = {}
+
+        if gemini_api_key_env:
+            CONFIG["DATA_PROVIDERS"]["GEMINI_API_KEY"] = gemini_api_key_env
+            print("Successfully injected GEMINI API key from environment variable.")
+        else:
+            print("Warning: GEMINI_API_KEY environment variable not set.")
+            
+        if openai_api_key_env:
+            CONFIG["DATA_PROVIDERS"]["OPENAI_API_KEY"] = openai_api_key_env
             print("Successfully injected OpenAI API key from environment variable.")
         else:
-            print("Warning: OPENAI_API_KEY environment variable not set. AI features will fail.")
+            print("Warning: OPENAI_API_KEY environment variable not set.")
+            
     except Exception as e:
         print(f"Error injecting env var key: {e}")
     # --- END OF MODIFICATION ---

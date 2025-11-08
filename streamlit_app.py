@@ -36,13 +36,14 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 try:
-    # --- ✅ MODIFIED (P4): Import get_ai_stock_analysis ---
+    # --- ✅ MODIFIED: Import new AI portfolio summary function ---
     from spus import (
         load_config,
         fetch_market_tickers,
         process_ticker,
         check_market_regime,
-        get_ai_stock_analysis # <-- ADDED
+        get_ai_stock_analysis,
+        get_ai_portfolio_summary # <-- ✅ NEW
     )
 except ImportError as e:
     st.error(f"Error: Failed to import 'spus.py'. Details: {e}")
@@ -625,7 +626,7 @@ def create_price_chart(hist_df, ticker_data, CONFIG):
         fig.add_shape(
             type="rect",
             x0=chart_start_date, y0=be_ob_low,
-            x1=chart_end_date, y1=be_ob_high,
+            x1=chart_end_date, y1=b_ob_high,
             line=dict(width=0),
             fillcolor="rgba(255, 0, 0, 0.2)",
             layer="below",
@@ -1790,6 +1791,63 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
     kpi_cols[2].metric("Unrealized P/L", f"${unrealized_pl:,.2f}", delta_color="normal" if unrealized_pl >= 0 else "inverse")
     kpi_cols[3].metric("Realized P/L (FIFO)", f"${realized_pl:,.2f}", delta_color="normal" if realized_pl >= 0 else "inverse")
     
+    # --- ✅ NEW: AI Portfolio Assessment ---
+    st.divider()
+    st.subheader("🤖 AI Portfolio Assessment")
+    
+    cache_key = "ai_summary_portfolio"
+    
+    if cache_key in st.session_state:
+        st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
+        if st.button("🔄 Regenerate Assessment", key="regen_ai_portfolio"):
+            del st.session_state[cache_key]
+            st.rerun()
+    else:
+        if st.button("🤖 Click to Generate AI Portfolio Assessment", type="secondary", key="gen_ai_portfolio"):
+            with st.spinner("Analyzing your portfolio... This may take a moment."):
+                
+                # 1. Prepare data for the AI
+                portfolio_metrics = {
+                    "Total Value": f"${total_portfolio_value:,.2f}",
+                    "Cash": f"${cash:,.2f}",
+                    "Stock Market Value": f"${market_value:,.2f}",
+                    "Unrealized P/L": f"${unrealized_pl:,.2f}",
+                    "Realized P/L": f"${realized_pl:,.2f}",
+                    "Number of Holdings": len(open_positions)
+                }
+                
+                if not open_positions.empty:
+                    # Calculate Sector Allocation
+                    sector_alloc = open_positions.groupby('Sector')['Market Value'].sum()
+                    sector_alloc_pct = (sector_alloc / market_value * 100).round(1).to_dict()
+                    portfolio_metrics["Sector Allocation (%)"] = sector_alloc_pct
+                    
+                    # Calculate Weighted Factor Exposure
+                    open_positions['Weight'] = open_positions['Market Value'] / market_value
+                    weighted_factors = {}
+                    for col in factor_z_cols:
+                        if col in open_positions.columns:
+                            weighted_score = (open_positions[col] * open_positions['Weight']).sum()
+                            weighted_factors[col.replace('Z_', '')] = f"{weighted_score:.2f}"
+                    portfolio_metrics["Weighted Factor Exposure"] = weighted_factors
+                    
+                    # Get Top 5 Holdings
+                    top_5 = open_positions.sort_values(by='Market Value', ascending=False).head(5)
+                    top_5_pct = (top_5['Market Value'].sum() / market_value) * 100
+                    portfolio_metrics["Top 5 Holdings %"] = f"{top_5_pct:.1f}%"
+                    portfolio_metrics["Top 5 Holdings"] = top_5[['Name', 'Weight']].to_dict('index')
+
+                # 2. Call the new AI function from spus.py
+                try:
+                    summary = get_ai_portfolio_summary(portfolio_metrics, CONFIG)
+                    st.session_state[cache_key] = summary
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to generate AI portfolio summary: {e}")
+                    st.session_state[cache_key] = "AI Summary generation failed."
+    
+    # --- END OF NEW SECTION ---
+    
     st.divider()
 
     # --- 3. Portfolio Management (Add/Load/Save) ---
@@ -1799,7 +1857,7 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
     new_cash = st.number_input(
         "Set Your Cash Balance:", 
         min_value=0.0, 
-        value=st.session_state.cash, 
+        value=float(st.session_state.cash),  # <-- ✅ BUG FIX: Cast value to float
         step=1000.0, 
         format="%.2f",
         key="cash_input"

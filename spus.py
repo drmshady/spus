@@ -46,6 +46,7 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
 - ✅ MODIFIED (USER REQ): get_ai_stock_analysis now supports a 
   `position_assessment` type for the portfolio tab.
 - ✅ BUG FIX: Fixed NameError 'parsed' is not defined in get_ai_stock_analysis
+- ✅ NEW: Added `search_google_news` fallback for get_ai_stock_analysis
 """
 
 import requests
@@ -65,6 +66,7 @@ import openai
 from openai import OpenAI
 import google.genai as genai 
 from google.genai.errors import APIError as GeminiAPIError
+from urllib.parse import quote_plus # <-- ✅ NEW IMPORT
 
 # --- Define Base Directory ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -482,26 +484,81 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         }
         return ob_data_default
 
+# --- ✅ NEW FUNCTION: Live News Search Fallback ---
+def search_google_news(ticker_symbol, company_name):
+    """
+    Performs a simple Google News search if pre-fetched news is missing.
+    This is a fallback and may be blocked by Google or break if HTML changes.
+    """
+    try:
+        query = f"{company_name} ({ticker_symbol}) stock news"
+        safe_query = quote_plus(query)
+        # tbm=nws filters for "News"
+        search_url = f"https://www.google.com/search?q={safe_query}&tbm=nws" 
+        
+        # Set a user-agent to avoid simple bot detection
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        logging.info(f"[{ticker_symbol}] No pre-fetched news. Attempting live Google News search...")
+        response = requests.get(search_url, headers=headers, timeout=5)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        headlines = []
+        # Find all <a> tags that contain an <h3> tag (common for headlines)
+        for a_tag in soup.find_all('a'):
+            h3_tag = a_tag.find('h3')
+            if h3_tag:
+                headline = h3_tag.get_text(strip=True)
+                if headline and headline not in headlines:
+                    headlines.append(headline)
+        
+        if not headlines:
+             # Fallback selector (this changes often)
+            for div in soup.find_all('div', {'role': 'heading'}):
+                 headline = div.get_text(strip=True)
+                 if headline and headline not in headlines:
+                    headlines.append(headline)
+
+        if headlines:
+            logging.info(f"[{ticker_symbol}] Found {len(headlines)} headlines from live search.")
+            # Format with bullets for the AI prompt
+            return "\n- ".join(headlines[:5])
+        else:
+            logging.warning(f"[{ticker_symbol}] Google News search returned no headlines.")
+            return "No recent news found (live search failed)."
+
+    except Exception as e:
+        logging.error(f"[{ticker_symbol}] Live Google News search failed: {e}")
+        return "No recent news found (live search error)."
+
 # --- MODIFIED: Multi-API Fallback Function with Position Assessment ---
 def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG, analysis_type="deep_dive", position_data=None):
     """
     Tries Gemini API first, falls back to OpenAI API if the Gemini call fails.
     The prompt is customized based on the `analysis_type`.
+    
+    ✅ NEW: If `news_headlines_str` is empty, it will call `search_google_news`.
     """
     gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY") # NEW KEY
     openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
     
     # --- 1. Prepare Prompt & Context ---
     
-    # 1. Check/Format the news string
-    news_text = "No recent news found."
-    if news_headlines_str and news_headlines_str != "N/A":
-        # Replace the ", " separator from the original list with newlines
+    # --- ✅ MODIFICATION: Live search for news if missing ---
+    if news_headlines_str and news_headlines_str != "N/A" and news_headlines_str != "No recent news found.":
+        logging.info(f"[{ticker_symbol}] Using pre-fetched news for AI summary.")
         news_text = news_headlines_str.replace(", ", "\n- ")
         if not news_text.startswith("- "):
              news_text = "- " + news_text
     else:
-        logging.info(f"[{ticker_symbol}] No news headlines found in parsed_data.")
+        # If no news, perform a live search
+        logging.warning(f"[{ticker_symbol}] No pre-fetched news found. Calling live search fallback.")
+        news_text = search_google_news(ticker_symbol, company_name)
+    # --- END MODIFICATION ---
 
     # --- ✅ BUG FIX: Define `parsed` *before* it is used ---
     # Convert pandas Series to dict *first* if needed

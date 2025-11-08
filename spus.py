@@ -60,7 +60,8 @@ import random
 from scipy.signal import argrelextrema 
 import openai
 from openai import OpenAI
-
+import google.generativeai as genai
+from google.generativeai.errors import APIError as GeminiAPIError 
 # --- Define Base Directory ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -478,32 +479,74 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         return ob_data_default
 
 # --- ✅ MODIFIED (P5): Added check for placeholder key ---
+# In spus (6).py, replace the entire get_ai_stock_analysis function
+
+# --- MODIFIED: Multi-API Fallback Function ---
 def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG):
     """
-    Takes all parsed data and news, sending them to OpenAI API for a holistic summary.
-    This function is now called ON-DEMAND from streamlit_app.py.
+    Tries Gemini API first, falls back to OpenAI API if the Gemini call fails.
     """
-    api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
+    gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY") # NEW KEY
+    openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
     
-    # --- THIS IS THE NEW CHECK ---
-    # It checks for None, the placeholder in config.json, and the default template string
-    if not api_key or api_key == "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
-        logging.warning(f"[{ticker_symbol}] OpenAI API Key not configured. Skipping AI summary.")
-        return "N/A (AI Summary Disabled: API Key Missing)"
-    # --- END OF NEW CHECK ---
+    # --- 1. Prepare Prompt & Context (Unchanged) ---
+    # ... [Keep your prompt creation logic here, using f-strings and formatting] ...
+    # This part remains the same, as the prompt works for both models
+    
+    # Example snippet of the prompt prep:
+    # prompt = f"""Task: Act as a stock market analyst. Analyze the following quantitative data... (Ticker: {ticker_symbol})... Analysis (in Arabic):"""
+    
+    # --- 2. Try Gemini (Primary) ---
+    if gemini_api_key and gemini_api_key != "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
+        try:
+            logging.info(f"[{ticker_symbol}] Attempting Gemini API (Primary)...")
+            client = genai.Client(api_key=gemini_api_key)
+            
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",  # Use a cost-effective, fast model
+                contents=[
+                    {"role": "user", "parts": [{"text": prompt}]}
+                ],
+                config={"system_instruction": "You are a helpful stock market analyst providing summaries in Arabic."}
+            )
+            summary = response.text
+            
+            logging.info(f"[{ticker_symbol}] Successfully received summary from Gemini.")
+            return str(summary)
+            
+        except GeminiAPIError as e:
+            # Catch API errors specific to Gemini (e.g., rate limits, invalid key, model failure)
+            logging.warning(f"[{ticker_symbol}] Gemini API failed: {e}. Falling back to OpenAI...")
+        except Exception as e:
+            # Catch other potential errors (e.g., connection issue)
+            logging.warning(f"[{ticker_symbol}] Non-API error with Gemini: {e}. Falling back to OpenAI...")
 
-    try:
-        client = OpenAI(api_key=api_key)
 
-        # 1. Check/Format the news string
-        news_text = "No recent news found."
-        if news_headlines_str and news_headlines_str != "N/A":
-            # Replace the ", " separator from the original list with newlines
-            news_text = news_headlines_str.replace(", ", "\n- ")
-            if not news_text.startswith("- "):
-                 news_text = "- " + news_text
-        else:
-            logging.info(f"[{ticker_symbol}] No news headlines found in parsed_data.")
+    # --- 3. Fallback to OpenAI ---
+    if openai_api_key and openai_api_key != "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
+        try:
+            logging.info(f"[{ticker_symbol}] Attempting OpenAI API (Fallback)...")
+            client = OpenAI(api_key=openai_api_key)
+
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful stock market analyst providing summaries in Arabic."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            summary = completion.choices[0].message.content
+            
+            logging.info(f"[{ticker_symbol}] Successfully received summary from OpenAI (Fallback).")
+            return str(summary)
+
+        except Exception as e:
+            logging.error(f"[{ticker_symbol}] Both Gemini and OpenAI APIs failed: {e}")
+            return f"N/A (AI Summary Error: Both APIs failed to generate a summary.)"
+            
+    else:
+        logging.warning(f"[{ticker_symbol}] Gemini failed and OpenAI key is missing or invalid.")
+        return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
 
         # 2. Extract key quantitative data
         last_price = parsed_data.get('last_price', 'N/A')

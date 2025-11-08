@@ -60,8 +60,8 @@ import random
 from scipy.signal import argrelextrema 
 import openai
 from openai import OpenAI
-import google.generativeai as genai 
-from google.generativeai.errors import APIError as GeminiAPIError
+import google.genai as genai 
+from google.genai.errors import APIError as GeminiAPIError
 
 # --- Define Base Directory ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

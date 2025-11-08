@@ -46,7 +46,12 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
 - ✅ MODIFIED (USER REQ): get_ai_stock_analysis now supports a 
   `position_assessment` type for the portfolio tab.
 - ✅ BUG FIX: Fixed NameError 'parsed' is not defined in get_ai_stock_analysis
-- ✅ NEW: Added `search_google_news` fallback for get_ai_stock_analysis
+- ✅ NEW: Replaced all news fetching with Finnhub.io API.
+- ✅ NEW: Added `fetch_data_finnhub_news` function.
+- ✅ MODIFIED: `process_ticker` now calls Finnhub for news.
+- ✅ MODIFIED: `parse_ticker_data` now parses Finnhub news format.
+- ✅ REMOVED: `search_google_news` (fragile scraping method).
+- ✅ REMOVED: News fetching from yfinance and Alpha Vantage.
 """
 
 import requests
@@ -56,7 +61,7 @@ import pandas_ta as ta
 import time
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta # <-- ✅ NEW IMPORT
 import json
 import numpy as np
 from bs4 import BeautifulSoup
@@ -66,7 +71,7 @@ import openai
 from openai import OpenAI
 import google.genai as genai 
 from google.genai.errors import APIError as GeminiAPIError
-from urllib.parse import quote_plus # <-- ✅ NEW IMPORT
+# ❌ REMOVED: from urllib.parse import quote_plus
 
 # --- Define Base Directory ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -484,56 +489,7 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         }
         return ob_data_default
 
-# --- ✅ NEW FUNCTION: Live News Search Fallback ---
-def search_google_news(ticker_symbol, company_name):
-    """
-    Performs a simple Google News search if pre-fetched news is missing.
-    This is a fallback and may be blocked by Google or break if HTML changes.
-    """
-    try:
-        query = f"{company_name} ({ticker_symbol}) stock news"
-        safe_query = quote_plus(query)
-        # tbm=nws filters for "News"
-        search_url = f"https://www.google.com/search?q={safe_query}&tbm=nws" 
-        
-        # Set a user-agent to avoid simple bot detection
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        logging.info(f"[{ticker_symbol}] No pre-fetched news. Attempting live Google News search...")
-        response = requests.get(search_url, headers=headers, timeout=5)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        headlines = []
-        # Find all <a> tags that contain an <h3> tag (common for headlines)
-        for a_tag in soup.find_all('a'):
-            h3_tag = a_tag.find('h3')
-            if h3_tag:
-                headline = h3_tag.get_text(strip=True)
-                if headline and headline not in headlines:
-                    headlines.append(headline)
-        
-        if not headlines:
-             # Fallback selector (this changes often)
-            for div in soup.find_all('div', {'role': 'heading'}):
-                 headline = div.get_text(strip=True)
-                 if headline and headline not in headlines:
-                    headlines.append(headline)
-
-        if headlines:
-            logging.info(f"[{ticker_symbol}] Found {len(headlines)} headlines from live search.")
-            # Format with bullets for the AI prompt
-            return "\n- ".join(headlines[:5])
-        else:
-            logging.warning(f"[{ticker_symbol}] Google News search returned no headlines.")
-            return "No recent news found (live search failed)."
-
-    except Exception as e:
-        logging.error(f"[{ticker_symbol}] Live Google News search failed: {e}")
-        return "No recent news found (live search error)."
+# --- ❌ REMOVED: `search_google_news` function is no longer needed. ---
 
 # --- MODIFIED: Multi-API Fallback Function with Position Assessment ---
 def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG, analysis_type="deep_dive", position_data=None):
@@ -541,24 +497,25 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
     Tries Gemini API first, falls back to OpenAI API if the Gemini call fails.
     The prompt is customized based on the `analysis_type`.
     
-    ✅ NEW: If `news_headlines_str` is empty, it will call `search_google_news`.
+    ✅ NOTE: News is now reliably provided by Finnhub, so the live search 
+    fallback (`search_google_news`) has been removed.
     """
     gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY") # NEW KEY
     openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
     
     # --- 1. Prepare Prompt & Context ---
     
-    # --- ✅ MODIFICATION: Live search for news if missing ---
+    # 1. Check/Format the news string
+    news_text = "No recent news found."
     if news_headlines_str and news_headlines_str != "N/A" and news_headlines_str != "No recent news found.":
-        logging.info(f"[{ticker_symbol}] Using pre-fetched news for AI summary.")
+        logging.info(f"[{ticker_symbol}] Using Finnhub news for AI summary.")
+        # Finnhub news is already a clean string of headlines
         news_text = news_headlines_str.replace(", ", "\n- ")
         if not news_text.startswith("- "):
              news_text = "- " + news_text
     else:
-        # If no news, perform a live search
-        logging.warning(f"[{ticker_symbol}] No pre-fetched news found. Calling live search fallback.")
-        news_text = search_google_news(ticker_symbol, company_name)
-    # --- END MODIFICATION ---
+        logging.info(f"[{ticker_symbol}] No news found in parsed_data for AI summary.")
+
 
     # --- ✅ BUG FIX: Define `parsed` *before* it is used ---
     # Convert pandas Series to dict *first* if needed
@@ -692,9 +649,8 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
         logging.warning(f"[{ticker_symbol}] Gemini failed and OpenAI key is missing or invalid.")
         return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
 
-# --- ✅ MODIFIED (USER REQ): Added Retry Logic ---
+# --- ✅ MODIFIED: Removed News from yfinance fetch ---
 def fetch_data_yfinance(ticker_obj, CONFIG):
-# ... (rest of the file is unchanged)
     """Fetches history and info from yfinance with retry logic."""
     retries = 3
     for attempt in range(retries):
@@ -707,7 +663,7 @@ def fetch_data_yfinance(ticker_obj, CONFIG):
                 "earnings": ticker_obj.income_stmt,
                 "quarterly_earnings": ticker_obj.quarterly_income_stmt,
                 "calendar": ticker_obj.calendar,
-                "news": ticker_obj.get_news() # <-- ✅ NEWS FIX
+                # ❌ REMOVED: "news": ticker_obj.get_news()
             }
             
             if hist.empty or info is None:
@@ -725,7 +681,7 @@ def fetch_data_yfinance(ticker_obj, CONFIG):
                 return None # Failed all retries
     return None
 
-# --- ✅ MODIFIED (USER REQ): Added Retry Logic ---
+# --- ✅ MODIFIED: Removed News from Alpha Vantage fetch ---
 def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
     """Fallback data provider: Alpha Vantage with retry logic."""
     if not api_key or api_key == "YOUR_API_KEY_1": # Check against a default placeholder
@@ -736,7 +692,7 @@ def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
     base_url = "https://www.alphavantage.co/query"
     hist_data = None
     info_data = None
-    news_list = []
+    # ❌ REMOVED: news_list = []
 
     retries = 3
     for attempt in range(retries):
@@ -785,34 +741,7 @@ def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
                      continue # Retry
                  info_data = None
 
-            # 3. Fetch News & Sentiment
-            try:
-                news_params = {
-                    "function": "NEWS_SENTIMENT",
-                    "tickers": ticker,
-                    "limit": 10, # Get 10 recent articles
-                    "apikey": api_key
-                }
-                response_news = requests.get(base_url, params=news_params, timeout=10)
-                response_news.raise_for_status()
-                news_data = response_news.json()
-                
-                if "feed" in news_data:
-                    for item in news_data["feed"]:
-                        try:
-                            publish_time = datetime.strptime(item.get('time_published'), '%Y%m%dT%H%M%S')
-                            publish_timestamp = int(publish_time.timestamp())
-                        except Exception:
-                            publish_timestamp = 0
-                        news_list.append({
-                            'title': item.get('title'),
-                            'providerPublishTime': publish_timestamp 
-                        })
-                else:
-                    logging.warning(f"[{ticker}] AV news fetch warning: {news_data.get('Note') or news_data.get('Error Message')}")
-            except Exception as e:
-                logging.warning(f"[{ticker}] Failed to fetch Alpha Vantage news: {e}")
-                # Don't fail the whole function, just return no news
+            # ❌ REMOVED: 3. Fetch News & Sentiment block
 
             # If we got here, all requests succeeded
             break # Exit retry loop
@@ -834,11 +763,51 @@ def fetch_data_alpha_vantage(ticker, api_key, CONFIG):
         return {
             "hist": hist_data, 
             "info": info_data, 
-            "earnings_data": {"news": news_list}, # <-- ADD THE NEWS HERE
+            "earnings_data": {}, # <-- ✅ MODIFIED: Return empty dict
             "source": "alpha_vantage"
         }
     else:
         return None
+
+# --- ✅ NEW FUNCTION: Fetch News from Finnhub ---
+def fetch_data_finnhub_news(ticker, api_key):
+    """
+    Fetches company news from Finnhub.io for the past 3 days.
+    """
+    if not api_key or api_key == "YOUR_NEW_FINNHUB_KEY_GOES_HERE":
+        logging.warning(f"[{ticker}] Finnhub API key is not set. Skipping news fetch.")
+        return []
+    
+    try:
+        # Get dates for the last 3 days
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
+        
+        base_url = "https://finnhub.io/api/v1/company-news"
+        params = {
+            "symbol": ticker,
+            "from": from_date,
+            "to": to_date,
+            "token": api_key
+        }
+        
+        response = requests.get(base_url, params=params, timeout=5)
+        response.raise_for_status()
+        news_data = response.json()
+        
+        if isinstance(news_data, list) and len(news_data) > 0:
+            logging.info(f"[{ticker}] Successfully fetched {len(news_data)} news items from Finnhub.")
+            return news_data # Returns a list of news dicts
+        else:
+            logging.info(f"[{ticker}] Finnhub returned no news.")
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        logging.error(f"[{ticker}] Finnhub news request error: {e}")
+        return []
+    except Exception as e:
+        logging.error(f"[{ticker}] Error processing Finnhub news: {e}")
+        return []
 
 
 def is_data_valid(data, source="yfinance"):
@@ -1152,95 +1121,73 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
         
         parsed['entry_signal'] = str(entry_signal) # Force string
 
-        # News & Earnings Date
-        if source == "yfinance":
-            try:
-                # --- THIS IS THE ORIGINAL NEWS CODE ---
-                news = earnings_data.get('news', [])
-                news_str = "No"
-                news_list_str = "N/A"
-                
-                if news and isinstance(news, list):
-                    news_titles = [str(item.get('title', 'N/A')) for item in news[:5]]
-                    news_list_str = ", ".join(news_titles) # Flatten list to string
-                    
-                    now_ts = datetime.now().timestamp()
-                    recent_news_ts = now_ts - (CONFIG.get('NEWS_LOOKBACK_HOURS', 48) * 3600)
-                    if any(item.get('providerPublishTime', 0) > recent_news_ts for item in news):
-                        news_str = "Yes"
-                
-                parsed['news_list'] = str(news_list_str) # Force string
-                parsed['recent_news'] = str(news_str) # Force string
-
-                # --- AI Summary Call moved to the end of the function ---
-
-                last_div_date_ts = info.get('lastDividendDate')
-                last_div_value = info.get('lastDividendValue')
-                
-                div_date_str = "N/A"
-                div_val_float = np.nan
-
-                if last_div_date_ts and pd.notna(last_div_date_ts) and last_div_value:
-                    div_date_str = pd.to_datetime(last_div_date_ts, unit='s').strftime('%Y-%m-%d')
-                    div_val_float = float(last_div_value)
-                else:
-                    divs = hist[hist['Dividends'] > 0]
-                    if not divs.empty:
-                        div_date_str = divs.index[-1].strftime('%Y-%m-%d')
-                        div_val_float = float(divs['Dividends'].iloc[-1])
-                
-                parsed['last_dividend_date'] = str(div_date_str)
-                parsed['last_dividend_value'] = float(div_val_float)
-
-
-                calendar = earnings_data.get('calendar', {})
-                date_val = "N/A"
-                if calendar and 'Earnings Date' in calendar and calendar['Earnings Date']:
-                    raw_date = calendar['Earnings Date'][0]
-                    date_val = pd.to_datetime(raw_date).strftime('%Y-%m-%d') if pd.notna(raw_date) else "N/A"
-                parsed['next_earnings_date'] = str(date_val) # Force string
-                
-                # Get Next Ex-Dividend Date
-                next_ex_div_ts = info.get('exDividendDate')
-                ex_div_date_str = "N/A"
-                if next_ex_div_ts and pd.notna(next_ex_div_ts):
-                    if next_ex_div_ts > datetime.now().timestamp():
-                        ex_div_date_str = pd.to_datetime(next_ex_div_ts, unit='s').strftime('%Y-%m-%d')
-                parsed['next_ex_dividend_date'] = str(ex_div_date_str)
-
-            except Exception as e:
-                 logging.warning(f"[{ticker_symbol}] Error parsing news/calendar: {e}")
-                 parsed['news_list'] = "N/A"
-                 parsed['recent_news'] = "N/A"
-                 parsed['next_earnings_date'] = "N/A"
-                 parsed['last_dividend_date'] = "N/A"
-                 parsed['last_dividend_value'] = np.nan
-                 parsed['next_ex_dividend_date'] = "N/A"
-        
-        else: # Alpha Vantage
-             # --- MODIFIED: Use the news we fetched ---
-             news = earnings_data.get('news', [])
-             news_str = "No"
-             news_list_str = "N/A"
-             
-             if news and isinstance(news, list):
-                news_titles = [str(item.get('title', 'N/A')) for item in news[:5]]
-                news_list_str = ", ".join(news_titles)
+        # --- ✅ NEW: News & Earnings Date (Consolidated Finnhub logic) ---
+        try:
+            # 1. Parse Finnhub News
+            news = data.get('finnhub_news', []) # Get news from process_ticker
+            news_str = "No"
+            news_list_str = "N/A"
+            
+            if news and isinstance(news, list):
+                # Get top 5 headlines
+                news_titles = [str(item.get('headline', 'N/A')) for item in news[:5]]
+                news_list_str = ", ".join(news_titles) # Flatten list to string
                 
                 now_ts = datetime.now().timestamp()
                 recent_news_ts = now_ts - (CONFIG.get('NEWS_LOOKBACK_HOURS', 48) * 3600)
-                if any(item.get('providerPublishTime', 0) > recent_news_ts for item in news):
+                
+                # Finnhub provides 'datetime' as a UTC timestamp
+                if any(item.get('datetime', 0) > recent_news_ts for item in news):
                     news_str = "Yes"
             
-             parsed['news_list'] = str(news_list_str) # Force string
-             parsed['recent_news'] = str(news_str) # Force string
-             # --- END MODIFICATION ---
-             
-             parsed['next_earnings_date'] = str(info.get('DividendDate', 'N/A (AV)'))
-             parsed['last_dividend_date'] = str(info.get('DividendDate', 'N/A (AV)'))
-             parsed['last_dividend_value'] = float(info.get('DividendPerShare', 'nan'))
-             parsed['next_ex_dividend_date'] = str(info.get('ExDividendDate', 'N/A (AV)'))
+            parsed['news_list'] = str(news_list_str) # Force string
+            parsed['recent_news'] = str(news_str) # Force string
 
+            # 2. Parse Earnings/Dividends (from yfinance info/earnings_data)
+            last_div_date_ts = info.get('lastDividendDate')
+            last_div_value = info.get('lastDividendValue')
+            
+            div_date_str = "N/A"
+            div_val_float = np.nan
+
+            if last_div_date_ts and pd.notna(last_div_date_ts) and last_div_value:
+                div_date_str = pd.to_datetime(last_div_date_ts, unit='s').strftime('%Y-%m-%d')
+                div_val_float = float(last_div_value)
+            else:
+                divs = hist[hist['Dividends'] > 0]
+                if not divs.empty:
+                    div_date_str = divs.index[-1].strftime('%Y-%m-%d')
+                    div_val_float = float(divs['Dividends'].iloc[-1])
+            
+            parsed['last_dividend_date'] = str(div_date_str)
+            parsed['last_dividend_value'] = float(div_val_float)
+
+            calendar = earnings_data.get('calendar', {})
+            date_val = "N/A"
+            if calendar and 'Earnings Date' in calendar and calendar['Earnings Date']:
+                raw_date = calendar['Earnings Date'][0]
+                date_val = pd.to_datetime(raw_date).strftime('%Y-%m-%d') if pd.notna(raw_date) else "N/A"
+            parsed['next_earnings_date'] = str(date_val) # Force string
+            
+            # Get Next Ex-Dividend Date
+            next_ex_div_ts = info.get('exDividendDate')
+            ex_div_date_str = "N/A"
+            if next_ex_div_ts and pd.notna(next_ex_div_ts):
+                if next_ex_div_ts > datetime.now().timestamp():
+                    ex_div_date_str = pd.to_datetime(next_ex_div_ts, unit='s').strftime('%Y-%m-%d')
+            parsed['next_ex_dividend_date'] = str(ex_div_date_str)
+
+        except Exception as e:
+             logging.warning(f"[{ticker_symbol}] Error parsing news/calendar: {e}")
+             parsed['news_list'] = "N/A"
+             parsed['recent_news'] = "N/A"
+             parsed['next_earnings_date'] = "N/A"
+             parsed['last_dividend_date'] = "N/A"
+             parsed['last_dividend_value'] = np.nan
+             parsed['next_ex_dividend_date'] = "N/A"
+        
+        # ❌ REMOVED: Old news parsing blocks for yfinance and Alpha Vantage
+        
         # --- 8. Risk Management ---
         
         rm_config = CONFIG.get('RISK_MANAGEMENT', {})
@@ -1409,12 +1356,12 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
         }
 
 
-# --- ✅ MODIFIED FUNCTION (Accepts CONFIG) ---
+# --- ✅ MODIFIED FUNCTION (Accepts CONFIG, Fetches News) ---
 def process_ticker(ticker, CONFIG):
     """
     Main ticker processing function.
     Attempts yfinance, validates, falls back to Alpha Vantage, validates,
-    then parses all data and calculates metrics.
+    fetches news from Finnhub, then parses all data.
     """
     if CONFIG is None:
         logging.error(f"process_ticker ({ticker}): CONFIG is None.")
@@ -1470,7 +1417,16 @@ def process_ticker(ticker, CONFIG):
                 'ai_holistic_analysis': None # <-- MODIFIED (P4)
             }
             
-    # 3. Parse and Calculate
+    # --- ✅ NEW: 3. Fetch News from Finnhub ---
+    finnhub_key = CONFIG.get("DATA_PROVIDERS", {}).get("FINNHUB_API_KEY")
+    if finnhub_key and finnhub_key != "YOUR_NEW_FINNHUB_KEY_GOES_HERE":
+        news_list = fetch_data_finnhub_news(ticker, finnhub_key)
+        data_to_parse['finnhub_news'] = news_list # Add news to the data dict
+    else:
+        logging.warning(f"[{ticker}] FINNHUB_API_KEY not found or is placeholder. News will be missing.")
+        data_to_parse['finnhub_news'] = []
+            
+    # 4. Parse and Calculate
     try:
         parsed_data = parse_ticker_data(data_to_parse, ticker, CONFIG)
         

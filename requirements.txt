@@ -13,4 +13,4 @@ beautifulsoup4
 lxml
 pytz
 openai
-
+google-genai

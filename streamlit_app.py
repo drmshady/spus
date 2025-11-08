@@ -151,6 +151,15 @@ def load_css():
             letter-spacing: 0.5px;
         }}
 
+        /* --- ✅ NEW: RTL Formatting for Arabic Content (AI Summary) --- */
+        .rtl-container {{
+            direction: rtl; 
+            text-align: right; 
+        }}
+        .rtl-container h2, .rtl-container h3, .rtl-container p, .rtl-container li, .rtl-container span, .rtl-container strong {{
+            text-align: right !important;
+        }}
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -1416,7 +1425,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     # --- ✅ MODIFIED: Add Name to Subheader ---
     st.subheader(f"Analysis for: {selected_ticker} - {ticker_data.get('shortName', '')}")
 
-    # --- ✅ NEW (USER REQ): Add to Portfolio Button ---
+    # --- ✅ NEW (USER REQ): Add to Portfolio Button & Fix Navigation Bug ---
     add_col1, add_col2, add_col3 = st.columns([2,2,1])
     
     # Add Previous/Next Buttons
@@ -1427,11 +1436,13 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
         is_first = (current_index == 0)
         if add_col1.button("⬅️ Previous", use_container_width=True, disabled=is_first, key="prev_ticker"):
             st.session_state.selected_ticker = ticker_list[current_index - 1]
+            st.session_state.active_tab = "🔬 Ticker Deep Dive" # <-- FIX: Explicitly keep tab
             st.rerun()
             
         is_last = (current_index == len(ticker_list) - 1)
         if add_col2.button("Next ➡️", use_container_width=True, disabled=is_last, key="next_ticker"):
             st.session_state.selected_ticker = ticker_list[current_index + 1]
+            st.session_state.active_tab = "🔬 Ticker Deep Dive" # <-- FIX: Explicitly keep tab
             st.rerun()
 
     except ValueError:
@@ -1481,16 +1492,17 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     st.divider()
 
-    # --- ✅ MODIFIED (USER REQ): On-Demand AI Summary (OpenAI) ---
+    # --- ✅ MODIFIED (USER REQ): On-Demand AI Summary with RTL ---
     st.subheader("🤖 AI-Powered Deep Dive")
-    cache_key = f"ai_summary_{selected_ticker}"
+    cache_key = f"ai_summary_{selected_ticker}_deep_dive" # Unique key for deep dive
     
     # Check if we already generated this summary
     if cache_key in st.session_state:
-        st.markdown(st.session_state[cache_key], unsafe_allow_html=True)
+        # Wrap in a div with RTL class
+        st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
     else:
         # If not, show the button
-        if st.button(f"🤖 Click to Generate AI Summary for {selected_ticker}", type="secondary"):
+        if st.button(f"🤖 Click to Generate AI Summary for {selected_ticker}", type="secondary", key="gen_ai_deep_dive"):
             with st.spinner(f"Generating AI analysis for {selected_ticker}... This may take a moment."):
                 try:
                     # Get the data needed for the prompt
@@ -1503,7 +1515,8 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
                         company_name=company_name,
                         news_headlines_str=news_headlines,
                         parsed_data=ticker_data, # Pass the whole row
-                        CONFIG=CONFIG # Pass the config for the API key
+                        CONFIG=CONFIG, # Pass the config for the API key
+                        analysis_type="deep_dive" # New argument for prompt tailoring
                     )
                     st.session_state[cache_key] = summary
                     st.rerun() # Rerun to display the summary
@@ -1595,7 +1608,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
         st.metric("Position Size (USD)", pos_usd_display, help="Shares * Last Price")
 
     st.divider() 
-
+    
     st.subheader("Key Price Zones")
     zone_cols = st.columns(4)
     
@@ -2010,14 +2023,15 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
     st.subheader("Position Analyzer")
     
     if not open_positions.empty:
-        selected_ticker = st.selectbox("Select a position to analyze:", options=open_positions.index)
+        # Use a consistent key for position analyzer selection
+        selected_ticker_port = st.selectbox("Select a position to analyze:", options=open_positions.index, key="port_pos_analyzer_select")
         
-        if selected_ticker:
-            position_data = open_positions.loc[selected_ticker]
-            ticker_data = all_data_df.loc[selected_ticker]
+        if selected_ticker_port:
+            position_data = open_positions.loc[selected_ticker_port]
+            ticker_data = all_data_df.loc[selected_ticker_port]
             
-            if st.button(f"🔬 Go to Deep Dive for {selected_ticker}", key=f"deep_dive_port_{selected_ticker}"):
-                st.session_state.selected_ticker = selected_ticker
+            if st.button(f"🔬 Go to Deep Dive for {selected_ticker_port}", key=f"deep_dive_port_{selected_ticker_port}"):
+                st.session_state.selected_ticker = selected_ticker_port
                 st.session_state.active_tab = "🔬 Ticker Deep Dive"
                 st.rerun()
 
@@ -2058,6 +2072,8 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
 # --- ✅ NEW (USER REQ): Position Analysis v2 (with Trailing Stop) ---
 def display_position_analysis_v2(position_data, ticker_data, CONFIG):
 # ... (unchanged)
+    
+    selected_ticker = position_data.name # Get ticker from position data index
     
     pa_col1, pa_col2, pa_col3 = st.columns(3)
     
@@ -2128,6 +2144,46 @@ def display_position_analysis_v2(position_data, ticker_data, CONFIG):
                 st.success("Your cost basis is already at or below the current Demand Zone. This is a strong position.")
         else:
             st.warning("No clear Demand Zone (Bullish OB) found.")
+
+    st.divider()
+    
+    # --- ✅ NEW: On-Demand AI Summary for Position ---
+    st.subheader("🤖 Position-Specific AI Assessment")
+    cache_key = f"ai_summary_{selected_ticker}_position" 
+    
+    # Check if we already generated this summary
+    if cache_key in st.session_state:
+        # Wrap in a div with RTL class
+        st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
+    else:
+        # If not, show the button
+        if st.button(f"🤖 Click to Generate Position Assessment for {selected_ticker}", type="secondary", key="gen_ai_position"):
+            with st.spinner(f"Generating AI position assessment for {selected_ticker}... This may take a moment."):
+                try:
+                    # Prepare extra position-specific data for the prompt
+                    position_details = {
+                        "Shares": position_data['Shares'],
+                        "Average Cost": f"${cost_basis:,.2f}",
+                        "Current Price": f"${current_price:,.2f}",
+                        "Unrealized P/L": f"${position_data['Unrealized P/L']:,.2f}",
+                        "P/L Percent": f"{(position_data['Unrealized P/L'] / position_data['Total Cost']) * 100:.2f}%",
+                    }
+                    
+                    summary = get_ai_stock_analysis(
+                        ticker_symbol=selected_ticker,
+                        company_name=ticker_data.get('shortName', selected_ticker),
+                        news_headlines_str=ticker_data.get('news_list', 'No recent news found.'),
+                        parsed_data=ticker_data,
+                        CONFIG=CONFIG,
+                        analysis_type="position_assessment", # New argument
+                        position_data=position_details # New argument
+                    )
+                    st.session_state[cache_key] = summary
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to generate AI position assessment: {e}")
+                    st.session_state[cache_key] = "AI Assessment generation failed."
+    # --- END OF NEW BLOCK ---
 
 
 # --- ⭐️ 6. Scheduler Entry Point ---

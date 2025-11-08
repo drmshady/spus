@@ -820,6 +820,8 @@ def run_market_analyzer_app(config_file_name):
 
     # --- Load Config & CSS ---
     # --- ✅ MODIFIED (P5): Inject API key from st.secrets ---
+   # In streamlit_app (5).py, inside run_market_analyzer_app:
+
     if 'CONFIG' not in st.session_state:
         # 1. Load the base config from the file
         config_data = load_config(config_file_name)
@@ -827,6 +829,32 @@ def run_market_analyzer_app(config_file_name):
         if config_data is None:
             st.error(f"FATAL: {config_file_name} not found or corrupted. App cannot start.")
             st.stop()
+        
+        # 2. Inject API keys from Streamlit secrets
+        if "DATA_PROVIDERS" not in config_data:
+            config_data["DATA_PROVIDERS"] = {}
+        
+        # Inject Gemini API Key (Primary)
+        gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+        if gemini_api_key:
+            config_data["DATA_PROVIDERS"]["GEMINI_API_KEY"] = gemini_api_key
+            logging.info("Successfully injected GEMINI API key from st.secrets.")
+        else:
+            logging.warning("GEMINI_API_KEY not found in Streamlit secrets. Gemini features will fail.")
+
+        # Inject OpenAI API Key (Fallback)
+        openai_api_key = st.secrets.get("OPENAI_API_KEY")
+        if openai_api_key:
+            config_data["DATA_PROVIDERS"]["OPENAI_API_KEY"] = openai_api_key
+            logging.info("Successfully injected OpenAI API key from st.secrets.")
+        else:
+            logging.warning("OPENAI_API_KEY not found in Streamlit secrets. OpenAI features will fail.")
+
+        # 3. Store the modified config in session state
+        st.session_state.CONFIG = config_data
+
+    CONFIG = st.session_state.CONFIG
+# ... rest of run_market_analyzer_app continues ...
         
         # 2. Try to get the API key from Streamlit secrets
         try:

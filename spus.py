@@ -43,6 +43,8 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
 - ✅ ADDED (USER REQ): Retry logic for fetch_data_alpha_vantage
 - ✅ ADDED (USER REQ): Volatility gate (ATR % > X) in check_market_regime
 - ✅ ADDED (USER REQ): Dynamic risk % (from equity) in parse_ticker_data
+- ✅ MODIFIED (USER REQ): get_ai_stock_analysis now supports a 
+  `position_assessment` type for the portfolio tab.
 """
 
 import requests
@@ -479,10 +481,11 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         }
         return ob_data_default
 
-# --- MODIFIED: Multi-API Fallback Function ---
-def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG):
+# --- MODIFIED: Multi-API Fallback Function with Position Assessment ---
+def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG, analysis_type="deep_dive", position_data=None):
     """
     Tries Gemini API first, falls back to OpenAI API if the Gemini call fails.
+    The prompt is customized based on the `analysis_type`.
     """
     gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY") # NEW KEY
     openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
@@ -506,40 +509,70 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
     trend = parsed_data.get('Trend (50/200 Day MA)', 'N/A')
     macd = parsed_data.get('MACD_Signal', 'N/A')
     smc_signal = parsed_data.get('entry_signal', 'N/A')
-    rr_ratio = parsed_data.get('Risk/Reward Ratio', 'N/A')
+    rr_ratio = parsed.get('Risk/Reward Ratio', 'N/A')
     if isinstance(rr_ratio, float):
         rr_ratio = f"{rr_ratio:.2f}"
     if isinstance(parsed_data, pd.Series):
          # Convert pandas Series to dict for easier prompting
          parsed_data = parsed_data.to_dict()
 
-    # 3. Create the holistic prompt
-    prompt = f"""
-    Task: Act as a stock market analyst. Analyze the following quantitative data and qualitative news headlines for the company '{company_name}' (Ticker: {ticker_symbol}). Generate a brief, holistic analysis for an investor.
+    # 3. Create the holistic prompt (customized by type)
+    if analysis_type == "position_assessment":
+        # Position Assessment Prompt (Portfolio Tab)
+        position_details_str = "\n".join([f"- **{k}**: {v}" for k, v in position_data.items()])
+        
+        prompt = f"""
+        Task: Act as a portfolio manager. Analyze the stock '{company_name}' (Ticker: {ticker_symbol}) in the context of the investor's current position and market data. Generate an **assessment and recommendation** in Arabic.
 
-    Output Format (Use Arabic and Markdown):
-    1.  **الملخص التنفيذي:** (A 1-2 sentence summary of the stock's current situation.)
-    2.  **التحليل الفني (Technical Analysis):** (Analyze the trend, MACD, and SMC signal. Is it a good time to buy?)
-    3.  **التحليل الأساسي (Fundamental Analysis):** (Analyze the valuation and sector.)
-    4.  **تحليل المخاطر والأخبار:** (Summarize the key news and the Risk/Reward ratio.)
+        Output Format (Use Arabic and Markdown - **Forced RTL**):
+        1.  **تقييم الوضع الحالي:** (Analyze the stock's performance in the portfolio (P/L) versus its current market trend and Quant Score.)
+        2.  **التحليل الأساسي والفني:** (Briefly summarize the key fundamental factors and current technical signals.)
+        3.  **التوصية (Recommendation):** (Should the investor **Hold**, **Add** (Averaging down/up), or **Reduce/Exit**? Justify based on the position data and technical signals like stop loss/demand zone proximity.)
 
-    Key Quantitative Data:
-    -   **Last Price:** {last_price}
-    -   **Sector:** {sector}
-    -   **Valuation (Graham):** {valuation}
-    -   **MA Trend (50/200):** {trend}
-    -   **MACD Signal:** {macd}
-    -   **SMC Entry Signal:** {smc_signal}
-    -   **Risk/Reward Ratio:** {rr_ratio}
-    -   **Full Data (for context):** {json.dumps(parsed_data, indent=2, default=str)}
+        Investor's Current Position:
+        {position_details_str}
 
-    Recent News Headlines:
-    ---
-    {news_text}
-    ---
-    
-    Analysis (in Arabic):
-    """
+        Key Market Data for {ticker_symbol}:
+        -   **Last Price:** {last_price}
+        -   **MA Trend (50/200):** {trend}
+        -   **SMC Entry Signal (New Trade):** {smc_signal}
+        -   **Risk/Reward Ratio (New Trade):** {rr_ratio}
+
+        Recent News Headlines:
+        ---
+        {news_text}
+        ---
+        
+        Analysis (in Arabic):
+        """
+        
+    else: # Default Deep Dive Prompt (Deep Dive Tab)
+        prompt = f"""
+        Task: Act as a stock market analyst. Analyze the following quantitative data and qualitative news headlines for the company '{company_name}' (Ticker: {ticker_symbol}). Generate a brief, holistic analysis for an investor.
+
+        Output Format (Use Arabic and Markdown - **Forced RTL**):
+        1.  **الملخص التنفيذي:** (A 1-2 sentence summary of the stock's current situation.)
+        2.  **التحليل الفني (Technical Analysis):** (Analyze the trend, MACD, and SMC signal. Is it a good time to buy?)
+        3.  **التحليل الأساسي (Fundamental Analysis):** (Analyze the valuation and sector.)
+        4.  **تحليل المخاطر والأخبار:** (Summarize the key news and the Risk/Reward ratio.)
+
+        Key Quantitative Data:
+        -   **Last Price:** {last_price}
+        -   **Sector:** {sector}
+        -   **Valuation (Graham):** {valuation}
+        -   **MA Trend (50/200):** {trend}
+        -   **MACD Signal:** {macd}
+        -   **SMC Entry Signal:** {smc_signal}
+        -   **Risk/Reward Ratio:** {rr_ratio}
+        -   **Full Data (for context):** {json.dumps(parsed_data, indent=2, default=str)}
+
+        Recent News Headlines:
+        ---
+        {news_text}
+        ---
+        
+        Analysis (in Arabic):
+        """
     # --- End Prompt Prep ---
 
 
@@ -554,7 +587,7 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
                 contents=[
                     {"role": "user", "parts": [{"text": prompt}]}
                 ],
-                config={"system_instruction": "You are a helpful stock market analyst providing summaries in Arabic."}
+                config={"system_instruction": "You are a helpful stock market analyst providing summaries in Arabic. The output must be formatted with Arabic markdown headings and bullet points."}
             )
             summary = response.text
             
@@ -578,7 +611,7 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
             completion = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a helpful stock market analyst providing summaries in Arabic."},
+                    {"role": "system", "content": "You are a helpful stock market analyst providing summaries in Arabic. The output must be formatted with Arabic markdown headings and bullet points."},
                     {"role": "user", "content": prompt}
                 ]
             )

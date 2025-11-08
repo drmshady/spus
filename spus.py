@@ -60,8 +60,9 @@ import random
 from scipy.signal import argrelextrema 
 import openai
 from openai import OpenAI
-import google.generativeai as genai
+import google.generativeai as genai 
 from google.generativeai.errors import APIError as GeminiAPIError
+
 # --- Define Base Directory ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -478,9 +479,6 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         }
         return ob_data_default
 
-# --- ✅ MODIFIED (P5): Added check for placeholder key ---
-# In spus (6).py, replace the entire get_ai_stock_analysis function
-
 # --- MODIFIED: Multi-API Fallback Function ---
 def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG):
     """
@@ -489,15 +487,64 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
     gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY") # NEW KEY
     openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
     
-    # --- 1. Prepare Prompt & Context (Unchanged) ---
-    # ... [Keep your prompt creation logic here, using f-strings and formatting] ...
-    # This part remains the same, as the prompt works for both models
+    # --- 1. Prepare Prompt & Context ---
     
-    # Example snippet of the prompt prep:
-    # prompt = f"""Task: Act as a stock market analyst. Analyze the following quantitative data... (Ticker: {ticker_symbol})... Analysis (in Arabic):"""
+    # 1. Check/Format the news string
+    news_text = "No recent news found."
+    if news_headlines_str and news_headlines_str != "N/A":
+        # Replace the ", " separator from the original list with newlines
+        news_text = news_headlines_str.replace(", ", "\n- ")
+        if not news_text.startswith("- "):
+             news_text = "- " + news_text
+    else:
+        logging.info(f"[{ticker_symbol}] No news headlines found in parsed_data.")
+
+    # 2. Extract key quantitative data
+    last_price = parsed_data.get('last_price', 'N/A')
+    sector = parsed_data.get('Sector', 'N/A')
+    valuation = parsed_data.get('grahamValuation', 'N/A')
+    trend = parsed_data.get('Trend (50/200 Day MA)', 'N/A')
+    macd = parsed_data.get('MACD_Signal', 'N/A')
+    smc_signal = parsed_data.get('entry_signal', 'N/A')
+    rr_ratio = parsed_data.get('Risk/Reward Ratio', 'N/A')
+    if isinstance(rr_ratio, float):
+        rr_ratio = f"{rr_ratio:.2f}"
+    if isinstance(parsed_data, pd.Series):
+         # Convert pandas Series to dict for easier prompting
+         parsed_data = parsed_data.to_dict()
+
+    # 3. Create the holistic prompt
+    prompt = f"""
+    Task: Act as a stock market analyst. Analyze the following quantitative data and qualitative news headlines for the company '{company_name}' (Ticker: {ticker_symbol}). Generate a brief, holistic analysis for an investor.
+
+    Output Format (Use Arabic and Markdown):
+    1.  **الملخص التنفيذي:** (A 1-2 sentence summary of the stock's current situation.)
+    2.  **التحليل الفني (Technical Analysis):** (Analyze the trend, MACD, and SMC signal. Is it a good time to buy?)
+    3.  **التحليل الأساسي (Fundamental Analysis):** (Analyze the valuation and sector.)
+    4.  **تحليل المخاطر والأخبار:** (Summarize the key news and the Risk/Reward ratio.)
+
+    Key Quantitative Data:
+    -   **Last Price:** {last_price}
+    -   **Sector:** {sector}
+    -   **Valuation (Graham):** {valuation}
+    -   **MA Trend (50/200):** {trend}
+    -   **MACD Signal:** {macd}
+    -   **SMC Entry Signal:** {smc_signal}
+    -   **Risk/Reward Ratio:** {rr_ratio}
+    -   **Full Data (for context):** {json.dumps(parsed_data, indent=2, default=str)}
+
+    Recent News Headlines:
+    ---
+    {news_text}
+    ---
     
+    Analysis (in Arabic):
+    """
+    # --- End Prompt Prep ---
+
+
     # --- 2. Try Gemini (Primary) ---
-    if gemini_api_key and gemini_api_key != "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
+    if gemini_api_key and gemini_api_key != "AIzaSy...YOUR_GEMINI_KEY":
         try:
             logging.info(f"[{ticker_symbol}] Attempting Gemini API (Primary)...")
             client = genai.Client(api_key=gemini_api_key)
@@ -541,76 +588,16 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
             return str(summary)
 
         except Exception as e:
-            logging.error(f"[{ticker_symbol}] Both Gemini and OpenAI APIs failed: {e}")
-            return f"N/A (AI Summary Error: Both APIs failed to generate a summary.)"
+            logging.error(f"[{ticker_symbol}] OpenAI API failed: {e}")
+            return f"N/A (AI Summary Error: OpenAI API failed.)"
             
     else:
         logging.warning(f"[{ticker_symbol}] Gemini failed and OpenAI key is missing or invalid.")
         return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
 
-        # 2. Extract key quantitative data
-        last_price = parsed_data.get('last_price', 'N/A')
-        sector = parsed_data.get('Sector', 'N/A')
-        valuation = parsed_data.get('grahamValuation', 'N/A')
-        trend = parsed_data.get('Trend (50/200 Day MA)', 'N/A')
-        macd = parsed_data.get('MACD_Signal', 'N/A')
-        smc_signal = parsed_data.get('entry_signal', 'N/A')
-        rr_ratio = parsed_data.get('Risk/Reward Ratio', 'N/A')
-        if isinstance(rr_ratio, float):
-            rr_ratio = f"{rr_ratio:.2f}"
-        if isinstance(parsed_data, pd.Series):
-             # Convert pandas Series to dict for easier prompting
-             parsed_data = parsed_data.to_dict()
-
-        # 3. Create the holistic prompt
-        prompt = f"""
-        Task: Act as a stock market analyst. Analyze the following quantitative data and qualitative news headlines for the company '{company_name}' (Ticker: {ticker_symbol}). Generate a brief, holistic analysis for an investor.
-
-        Output Format (Use Arabic and Markdown):
-        1.  **الملخص التنفيذي:** (A 1-2 sentence summary of the stock's current situation.)
-        2.  **التحليل الفني (Technical Analysis):** (Analyze the trend, MACD, and SMC signal. Is it a good time to buy?)
-        3.  **التحليل الأساسي (Fundamental Analysis):** (Analyze the valuation and sector.)
-        4.  **تحليل المخاطر والأخبار:** (Summarize the key news and the Risk/Reward ratio.)
-
-        Key Quantitative Data:
-        -   **Last Price:** {last_price}
-        -   **Sector:** {sector}
-        -   **Valuation (Graham):** {valuation}
-        -   **MA Trend (50/200):** {trend}
-        -   **MACD Signal:** {macd}
-        -   **SMC Entry Signal:** {smc_signal}
-        -   **Risk/Reward Ratio:** {rr_ratio}
-        -   **Full Data (for context):** {json.dumps(parsed_data, indent=2, default=str)}
-
-        Recent News Headlines:
-        ---
-        {news_text}
-        ---
-        
-        Analysis (in Arabic):
-        """
-
-        # 4. Call the API
-        completion = client.chat.completions.create(
-            model="gpt-4o-mini", # <-- ✅ MODIFIED (USER REQ)
-            messages=[
-                {"role": "system", "content": "You are a helpful stock market analyst providing summaries in Arabic."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        summary = completion.choices[0].message.content
-        
-        # Clean up the response
-        summary = summary.replace('•', '-') # Clean bullets
-        return str(summary)
-
-    except Exception as e:
-        logging.error(f"[{ticker_symbol}] Error calling OpenAI API: {e}")
-        return f"N/A (AI Summary Error: {e})"
-
 # --- ✅ MODIFIED (USER REQ): Added Retry Logic ---
 def fetch_data_yfinance(ticker_obj, CONFIG):
+# ... (rest of the file is unchanged)
     """Fetches history and info from yfinance with retry logic."""
     retries = 3
     for attempt in range(retries):
@@ -1165,15 +1152,17 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
         use_cut_loss_filter = rm_config.get('USE_CUT_LOSS_FILTER', True)
 
         # --- MODIFIED (USER REQ): Dynamic Risk Calculation ---
+        # The keys here were corrected to match the config keys
         total_equity = rm_config.get('TOTAL_EQUITY', None)
         risk_percent = rm_config.get('RISK_PERCENT_PER_TRADE', 0.005) # 0.5% default
-        default_risk_amount = rm_config.get('RISK_PER_TRADE_AMOUNT', 500) # Fallback
+        default_risk_amount = rm_config.get('RISK_PER_TRADE_AMOUNT', 50) # Fallback to $50
 
         risk_per_trade_usd = np.nan
         if total_equity and total_equity > 0:
             risk_per_trade_usd = total_equity * risk_percent
         else:
-            risk_per_trade_usd = default_risk_amount
+            # Use the explicit fallback amount ($50)
+            risk_per_trade_usd = default_risk_amount 
         # --- END OF MODIFICATION ---
         
         atr = parsed.get('ATR')

@@ -45,6 +45,7 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
 - ✅ ADDED (USER REQ): Dynamic risk % (from equity) in parse_ticker_data
 - ✅ MODIFIED (USER REQ): get_ai_stock_analysis now supports a 
   `position_assessment` type for the portfolio tab.
+- ✅ BUG FIX: Fixed NameError 'parsed' is not defined in get_ai_stock_analysis
 """
 
 import requests
@@ -502,19 +503,25 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
     else:
         logging.info(f"[{ticker_symbol}] No news headlines found in parsed_data.")
 
+    # --- ✅ BUG FIX: Define `parsed` *before* it is used ---
+    # Convert pandas Series to dict *first* if needed
+    if isinstance(parsed_data, pd.Series):
+         parsed = parsed_data.to_dict()
+    else:
+         parsed = parsed_data.copy() # Avoid modifying the original dict
+    # --- END OF BUG FIX ---
+
     # 2. Extract key quantitative data
-    last_price = parsed_data.get('last_price', 'N/A')
-    sector = parsed_data.get('Sector', 'N/A')
-    valuation = parsed_data.get('grahamValuation', 'N/A')
-    trend = parsed_data.get('Trend (50/200 Day MA)', 'N/A')
-    macd = parsed_data.get('MACD_Signal', 'N/A')
-    smc_signal = parsed_data.get('entry_signal', 'N/A')
-    rr_ratio = parsed.get('Risk/Reward Ratio', 'N/A')
+    last_price = parsed.get('last_price', 'N/A')
+    sector = parsed.get('Sector', 'N/A')
+    valuation = parsed.get('grahamValuation', 'N/A')
+    trend = parsed.get('Trend (50/200 Day MA)', 'N/A')
+    macd = parsed.get('MACD_Signal', 'N/A')
+    smc_signal = parsed.get('entry_signal', 'N/A')
+    rr_ratio = parsed.get('Risk/Reward Ratio', 'N/A') # Now this works
     if isinstance(rr_ratio, float):
         rr_ratio = f"{rr_ratio:.2f}"
-    if isinstance(parsed_data, pd.Series):
-         # Convert pandas Series to dict for easier prompting
-         parsed_data = parsed_data.to_dict()
+
 
     # 3. Create the holistic prompt (customized by type)
     if analysis_type == "position_assessment":
@@ -564,7 +571,7 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
         -   **MACD Signal:** {macd}
         -   **SMC Entry Signal:** {smc_signal}
         -   **Risk/Reward Ratio:** {rr_ratio}
-        -   **Full Data (for context):** {json.dumps(parsed_data, indent=2, default=str)}
+        -   **Full Data (for context):** {json.dumps(parsed, indent=2, default=str)}
 
         Recent News Headlines:
         ---

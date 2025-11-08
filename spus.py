@@ -52,6 +52,7 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
 - ✅ MODIFIED: `parse_ticker_data` now parses Finnhub news format.
 - ✅ REMOVED: `search_google_news` (fragile scraping method).
 - ✅ REMOVED: News fetching from yfinance and Alpha Vantage.
+- ✅ NEW: Added `get_ai_portfolio_summary` for holistic portfolio review.
 """
 
 import requests
@@ -489,8 +490,6 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         }
         return ob_data_default
 
-# --- ❌ REMOVED: `search_google_news` function is no longer needed. ---
-
 # --- MODIFIED: Multi-API Fallback Function with Position Assessment ---
 def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parsed_data, CONFIG, analysis_type="deep_dive", position_data=None):
     """
@@ -647,6 +646,86 @@ def get_ai_stock_analysis(ticker_symbol, company_name, news_headlines_str, parse
             
     else:
         logging.warning(f"[{ticker_symbol}] Gemini failed and OpenAI key is missing or invalid.")
+        return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
+
+# --- ✅ NEW FUNCTION: AI Portfolio Summary ---
+def get_ai_portfolio_summary(portfolio_data, CONFIG):
+    """
+    Analyzes a dictionary of portfolio metrics and generates a holistic summary.
+    """
+    gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY")
+    openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
+    
+    # --- 1. Prepare Prompt ---
+    try:
+        # Convert pandas DataFrames/Series to JSON strings for the prompt
+        data_str = json.dumps(portfolio_data, indent=2, default=str)
+    except Exception as e:
+        logging.error(f"Failed to serialize portfolio data for AI: {e}")
+        return "Error: Could not format portfolio data for analysis."
+
+    prompt = f"""
+    Task: Act as a professional portfolio manager. The user has provided a snapshot of their stock portfolio. Analyze all the provided data and generate a high-level assessment and actionable suggestions in Arabic.
+
+    Output Format (Use Arabic and Markdown - **Forced RTL**):
+    1.  **الملخص التنفيذي (Executive Summary):** (A 1-2 sentence summary of the portfolio's current state, main risk, and primary strength.)
+    2.  **تحليل الأداء والتوزيع (Performance & Allocation):** (Analyze the P/L. Is the portfolio diversified by sector, or is it heavily concentrated? Comment on the cash vs. stock allocation.)
+    3.  **تحليل العوامل (Factor Analysis):** (Analyze the 'Weighted Factor Exposure'. Is the portfolio tilted towards 'Value', 'Momentum', 'Quality', etc.? What does this mean for the investor in the current market?)
+    4.  **توصيات واقتراحات (Recommendations & Suggestions):** (Provide 2-3 actionable suggestions. Examples: "Consider taking profit on [Top Winner]", "Your exposure to [Sector] is high, consider diversifying", "Your portfolio is heavily tilted towards [Factor], which is good/bad because...", "Your cash position is high/low, consider deploying/raising cash.")
+
+    Portfolio Data Snapshot:
+    ---
+    {data_str}
+    ---
+    
+    Analysis (in Arabic):
+    """
+    
+    # --- 2. Try Gemini (Primary) ---
+    if gemini_api_key and gemini_api_key != "AIzaSy...YOUR_GEMINI_KEY":
+        try:
+            logging.info("[Portfolio] Attempting Gemini API for portfolio summary...")
+            client = genai.Client(api_key=gemini_api_key)
+            
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    {"role": "user", "parts": [{"text": prompt}]}
+                ],
+                config={"system_instruction": "You are a helpful portfolio analyst providing summaries in Arabic. The output must be formatted with Arabic markdown headings and bullet points."}
+            )
+            summary = response.text
+            logging.info("[Portfolio] Successfully received summary from Gemini.")
+            return str(summary)
+            
+        except GeminiAPIError as e:
+            logging.warning(f"[Portfolio] Gemini API failed: {e}. Falling back to OpenAI...")
+        except Exception as e:
+            logging.warning(f"[Portfolio] Non-API error with Gemini: {e}. Falling back to OpenAI...")
+
+    # --- 3. Fallback to OpenAI ---
+    if openai_api_key and openai_api_key != "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
+        try:
+            logging.info("[Portfolio] Attempting OpenAI API (Fallback)...")
+            client = OpenAI(api_key=openai_api_key)
+
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful portfolio analyst providing summaries in Arabic. The output must be formatted with Arabic markdown headings and bullet points."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            summary = completion.choices[0].message.content
+            logging.info("[Portfolio] Successfully received summary from OpenAI (Fallback).")
+            return str(summary)
+
+        except Exception as e:
+            logging.error(f"[Portfolio] OpenAI API failed: {e}")
+            return f"N/A (AI Summary Error: OpenAI API failed.)"
+            
+    else:
+        logging.warning("[Portfolio] Gemini failed and OpenAI key is missing or invalid.")
         return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
 
 # --- ✅ MODIFIED: Removed News from yfinance fetch ---

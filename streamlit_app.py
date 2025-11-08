@@ -857,10 +857,18 @@ def run_market_analyzer_app(config_file_name):
                 logging.info("Successfully injected OpenAI API key from st.secrets.")
             else:
                 logging.warning("OPENAI_API_KEY not found in Streamlit secrets. OpenAI features will fail.")
+
+            # --- ✅ NEW: Inject Finnhub API Key ---
+            finnhub_api_key = st.secrets.get("FINNHUB_API_KEY")
+            if finnhub_api_key:
+                config_data["DATA_PROVIDERS"]["FINNHUB_API_KEY"] = finnhub_api_key
+                logging.info("Successfully injected FINNHUB API key from st.secrets.")
+            else:
+                logging.warning("FINNHUB_API_KEY not found in Streamlit secrets. News features will fail.")
             
         except Exception as e:
             # This handles cases where st.secrets might not be available (e.g., local run without secrets file)
-            logging.warning(f"Could not access Streamlit secrets. AI features will fail. Error: {e}")
+            logging.warning(f"Could not access Streamlit secrets. AI/News features may fail. Error: {e}")
 
         # 4. Store the modified config in session state
         st.session_state.CONFIG = config_data
@@ -1877,7 +1885,12 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
         uploaded_file = st.file_uploader("📂 Load Portfolio (JSON)", type="json")
         if uploaded_file is not None:
             try:
-                new_portfolio_data = json.load(uploaded_file)
+                # --- ✅ BUG FIX: Read file content as string, then use json.loads ---
+                file_content_bytes = uploaded_file.getvalue()
+                file_content_string = file_content_bytes.decode("utf-8")
+                new_portfolio_data = json.loads(file_content_string)
+                # --- End of Fix ---
+
                 if isinstance(new_portfolio_data, dict) and "transactions" in new_portfolio_data and "cash" in new_portfolio_data:
                     st.session_state.transactions = new_portfolio_data["transactions"]
                     st.session_state.cash = new_portfolio_data["cash"]
@@ -2220,6 +2233,7 @@ def run_analysis_for_scheduler():
         # Check both Gemini and OpenAI keys
         gemini_api_key_env = os.environ.get("GEMINI_API_KEY")
         openai_api_key_env = os.environ.get("OPENAI_API_KEY")
+        finnhub_api_key_env = os.environ.get("FINNHUB_API_KEY") # <-- ✅ NEW
         
         if "DATA_PROVIDERS" not in CONFIG:
             CONFIG["DATA_PROVIDERS"] = {}
@@ -2235,6 +2249,13 @@ def run_analysis_for_scheduler():
             print("Successfully injected OpenAI API key from environment variable.")
         else:
             print("Warning: OPENAI_API_KEY environment variable not set.")
+
+        # --- ✅ NEW: Inject Finnhub key for scheduler ---
+        if finnhub_api_key_env:
+            CONFIG["DATA_PROVIDERS"]["FINNHUB_API_KEY"] = finnhub_api_key_env
+            print("Successfully injected FINNHUB API key from environment variable.")
+        else:
+            print("Warning: FINNHUB_API_KEY environment variable not set. News will be missing.")
             
     except Exception as e:
         print(f"Error injecting env var key: {e}")

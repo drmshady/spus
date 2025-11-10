@@ -53,6 +53,10 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
 - ✅ REMOVED: `search_google_news` (fragile scraping method).
 - ✅ REMOVED: News fetching from yfinance and Alpha Vantage.
 - ✅ NEW: Added `get_ai_portfolio_summary` for holistic portfolio review.
+- ✅ MODIFIED (USER REQ): `get_ai_portfolio_summary` prompt now
+     analyzes detailed holdings for stock-specific recommendations.
+- ✅ MODIFIED (USER REQ): `process_ticker` now has a `fetch_news`
+     parameter to limit API calls.
 """
 
 import requests
@@ -665,13 +669,21 @@ def get_ai_portfolio_summary(portfolio_data, CONFIG):
         return "Error: Could not format portfolio data for analysis."
 
     prompt = f"""
-    Task: Act as a professional portfolio manager. The user has provided a snapshot of their stock portfolio. Analyze all the provided data and generate a high-level assessment and actionable suggestions in Arabic.
+    Task: Act as a professional portfolio manager. The user has provided a snapshot of their stock portfolio, including high-level metrics and a detailed list of every stock they own.
+    1. Analyze the high-level data (P/L, Allocation, Factor Exposure).
+    2. **Crucially, analyze the detailed 'Holdings Details' list.**
+    3. Combine these analyses to provide a holistic assessment and actionable, stock-specific recommendations in Arabic.
 
     Output Format (Use Arabic and Markdown - **Forced RTL**):
     1.  **الملخص التنفيذي (Executive Summary):** (A 1-2 sentence summary of the portfolio's current state, main risk, and primary strength.)
-    2.  **تحليل الأداء والتوزيع (Performance & Allocation):** (Analyze the P/L. Is the portfolio diversified by sector, or is it heavily concentrated? Comment on the cash vs. stock allocation.)
-    3.  **تحليل العوامل (Factor Analysis):** (Analyze the 'Weighted Factor Exposure'. Is the portfolio tilted towards 'Value', 'Momentum', 'Quality', etc.? What does this mean for the investor in the current market?)
-    4.  **توصيات واقتراحات (Recommendations & Suggestions):** (Provide 2-3 actionable suggestions. Examples: "Consider taking profit on [Top Winner]", "Your exposure to [Sector] is high, consider diversifying", "Your portfolio is heavily tilted towards [Factor], which is good/bad because...", "Your cash position is high/low, consider deploying/raising cash.")
+    2.  **تحليل الأداء والتوزيع (Performance & Allocation):** (Analyze the P/L, sector concentration, and cash vs. stock allocation.)
+    3.  **تحليل العوامل (Factor Analysis):** (Analyze the 'Weighted Factor Exposure'.)
+    4.  **⭐ توصيات الأسهم الفردية (Stock-Specific Recommendations):**
+        (This is the most important section. Look at 'Holdings Details' for each stock.
+        -   **Identify Top Buys/Adds:** Which stocks have a 'Buy' signal ('entry_signal') and strong 'Final Quant Score'?
+        -   **Identify Top Sells/Trims:** Which stocks have high 'Unrealized P/L' (good time to trim profit) OR very weak 'Final Quant Score' (good time to cut)?
+        -   **Identify Top Holds:** Which stocks are performing well and should be left alone?
+        -   **Give 3-5 specific recommendations** like: "توصية: **شراء/إضافة** سهم [Stock Name]... (السبب: إشارة شراء قوية ودرجة كمية عالية)" or "توصية: **تخفيف/بيع** سهم [Stock Name]... (ال..."السبب: ربح مرتفع / درجة كمية ضعيفة)")
 
     Portfolio Data Snapshot:
     ---
@@ -1436,7 +1448,7 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
 
 
 # --- ✅ MODIFIED FUNCTION (Accepts CONFIG, Fetches News) ---
-def process_ticker(ticker, CONFIG):
+def process_ticker(ticker, CONFIG, fetch_news=True):
     """
     Main ticker processing function.
     Attempts yfinance, validates, falls back to Alpha Vantage, validates,
@@ -1496,13 +1508,17 @@ def process_ticker(ticker, CONFIG):
                 'ai_holistic_analysis': None # <-- MODIFIED (P4)
             }
             
-    # --- ✅ NEW: 3. Fetch News from Finnhub ---
-    finnhub_key = CONFIG.get("DATA_PROVIDERS", {}).get("FINNHUB_API_KEY")
-    if finnhub_key and finnhub_key != "YOUR_NEW_FINNHUB_KEY_GOES_HERE":
-        news_list = fetch_data_finnhub_news(ticker, finnhub_key)
-        data_to_parse['finnhub_news'] = news_list # Add news to the data dict
+    # --- ✅ NEW: 3. Fetch News from Finnhub (Conditional) ---
+    if fetch_news:
+        finnhub_key = CONFIG.get("DATA_PROVIDERS", {}).get("FINNHUB_API_KEY")
+        if finnhub_key and finnhub_key != "YOUR_NEW_FINNHUB_KEY_GOES_HERE":
+            news_list = fetch_data_finnhub_news(ticker, finnhub_key)
+            data_to_parse['finnhub_news'] = news_list # Add news to the data dict
+        else:
+            logging.warning(f"[{ticker}] FINNHUB_API_KEY not found or is placeholder. News will be missing.")
+            data_to_parse['finnhub_news'] = []
     else:
-        logging.warning(f"[{ticker}] FINNHUB_API_KEY not found or is placeholder. News will be missing.")
+        # Don't fetch news to save API calls
         data_to_parse['finnhub_news'] = []
             
     # 4. Parse and Calculate

@@ -784,6 +784,7 @@ def display_buy_signal_checklist(ticker_data):
     entry_signal = ticker_data.get('entry_signal', 'No Trade')
     has_fvg = ticker_data.get('bullish_ob_fvg', False)
     has_vol = ticker_data.get('bullish_ob_volume_ok', False)
+    vol_missing_data = ticker_data.get('smc_volume_missing', False) # <-- ✅ NEW: Check for the flag
     
     details = []
     if entry_signal == 'Buy near Bullish OB':
@@ -795,7 +796,12 @@ def display_buy_signal_checklist(ticker_data):
         details.append("Signal: No Trade")
 
     details.append(f"FVG: {'✅' if has_fvg else '❌'}")
-    details.append(f"Vol: {'✅' if has_vol else '❌'}")
+    
+    # --- ✅ NEW: Add warning if volume data was missing ---
+    vol_icon = '✅' if has_vol else '❌'
+    vol_warning = " (Data N/A)" if vol_missing_data else ""
+    details.append(f"Vol: {vol_icon}{vol_warning}")
+    # --- End of change ---
     
     step4_details = ", ".join(details)
         

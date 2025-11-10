@@ -76,6 +76,7 @@ import openai
 from openai import OpenAI
 import google.genai as genai 
 from google.genai.errors import APIError as GeminiAPIError
+import pickle
 # ❌ REMOVED: from urllib.parse import quote_plus
 
 # --- Define Base Directory ---
@@ -206,10 +207,40 @@ def fetch_market_tickers(CONFIG):
         local_path = os.path.join(BASE_DIR, CONFIG['SPUS_HOLDINGS_CSV_PATH'])
         tickers = fetch_spus_tickers_from_csv(local_path)
         
-        # --- 2. Try web scrape fallback ---
+        # --- 2. Try web scrape fallback (with Caching) ---
         if tickers is None:
             logging.warning("Local SPUS CSV failed, trying web scrape fallback...")
-            tickers = fetch_spus_tickers_from_web()
+            
+            # --- ✅ NEW: Caching Logic ---
+            CACHE_DIR = os.path.join(BASE_DIR, "cache")
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            cache_path = os.path.join(CACHE_DIR, "scraped_tickers.pkl")
+            CACHE_TTL_SECONDS = 12 * 3600 # 12 hours
+
+            try:
+                if os.path.exists(cache_path):
+                    cache_mod_time = os.path.getmtime(cache_path)
+                    if (time.time() - cache_mod_time) < CACHE_TTL_SECONDS:
+                        logging.info(f"Using cached ticker list from {cache_path} (less than 12h old).")
+                        with open(cache_path, 'rb') as f:
+                            tickers = pickle.load(f)
+            except Exception as e:
+                logging.warning(f"Failed to load ticker cache, will re-scrape: {e}")
+                tickers = None # Ensure tickers is None so scrape runs
+            # --- ✅ END: Caching Logic ---
+
+            if tickers is None: # If cache was old, missing, or failed
+                logging.info("Cache empty or stale, running web scraper...")
+                tickers = fetch_spus_tickers_from_web()
+                
+                # If scrape was successful, save to cache
+                if tickers:
+                    try:
+                        with open(cache_path, 'wb') as f:
+                            pickle.dump(tickers, f)
+                        logging.info(f"Successfully saved new ticker list to cache: {cache_path}")
+                    except Exception as e:
+                        logging.warning(f"Failed to save ticker cache: {e}")
 
     elif source == "LOCAL_CSV":
         csv_file = CONFIG.get("TICKER_LIST_FILE")

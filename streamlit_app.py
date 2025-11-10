@@ -2228,7 +2228,7 @@ def display_position_analysis_v2(position_data, ticker_data, CONFIG):
         st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
     else:
         # If not, show the button
-        if st.button(f"🤖 Click to Generate Position Assessment for {selected_ticker}", type="secondary", key="gen_ai_position"):
+        if st.button(f"🤖 Click to Generate Position Assessment for {selected_ticker}", type="secondary", key=f"gen_ai_position_{selected_ticker}"):
             with st.spinner(f"Generating AI position assessment for {selected_ticker}... This may take a moment."):
                 try:
                     # Prepare extra position-specific data for the prompt

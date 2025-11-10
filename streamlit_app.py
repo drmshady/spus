@@ -43,7 +43,8 @@ try:
         process_ticker,
         check_market_regime,
         get_ai_stock_analysis,
-        get_ai_portfolio_summary # <-- ✅ NEW
+        get_ai_portfolio_summary, # <-- ✅ NEW
+        get_ai_top20_summary # <-- ✅ NEW (USER REQ)
     )
 except ImportError as e:
     st.error(f"Error: Failed to import 'spus.py'. Details: {e}")
@@ -199,6 +200,11 @@ def calculate_all_z_scores(df, config):
     small_sectors = sector_counts[sector_counts < min_sector_size].index
     logging.info(f"Small sectors (<{min_sector_size} stocks) found: {list(small_sectors)}. Global medians will be used.")
 
+    # --- ✅ NEW (Phase 2): Add and set the z_score_fallback flag ---
+    df_analysis['z_score_fallback'] = bool(False)
+    df_analysis.loc[df_analysis['Sector'].isin(small_sectors), 'z_score_fallback'] = bool(True)
+    # --- End of change ---
+
     all_components = []
     for factor in factor_defs.keys():
         all_components.extend(factor_defs[factor]['components'])
@@ -211,7 +217,7 @@ def calculate_all_z_scores(df, config):
             
         df_analysis[col] = pd.to_numeric(df_analysis[col], errors='coerce')
         
-        # --- ✅ FIX: Use scipy.stats.winsorize for consistent outlier clipping ---
+        # --- ✅ FIX (Phase 1): Use scipy.stats.winsorize for consistent outlier clipping ---
         # This replaces the manual quantile().clip() method
         df_analysis[col] = winsorize(df_analysis[col].fillna(df_analysis[col].median()), limits=(win_limit, win_limit))
         # We fillna with the median *before* winsorizing to handle NaNs robustly
@@ -627,7 +633,7 @@ def create_price_chart(hist_df, ticker_data, CONFIG):
         fig.add_shape(
             type="rect",
             x0=chart_start_date, y0=be_ob_low,
-            x1=chart_end_date, y1=b_ob_high,
+            x1=chart_end_date, y1=be_ob_high,
             line=dict(width=0),
             fillcolor="rgba(255, 0, 0, 0.2)",
             layer="below",
@@ -727,14 +733,38 @@ def create_portfolio_treemap(open_positions_df):
     )
     return fig
 
+# --- ✅ MODIFIED (Phase 2 & 3): Dynamic Checklist ---
 def display_buy_signal_checklist(ticker_data):
     """
     Displays a 5-step checklist on the Ticker Deep Dive tab.
+    Thresholds are now DYNAMIC based on market regime.
     """
     
-    SCORE_THRESHOLD = 1.0
-    FACTOR_Z_THRESHOLD = 0.5 
-    RR_RATIO_THRESHOLD = 1.5
+    # --- ✅ NEW (Phase 3): Dynamic Thresholds ---
+    market_regime = st.session_state.get('market_regime', 'UNKNOWN')
+    
+    if market_regime == "BEARISH":
+        SCORE_THRESHOLD = 1.2
+        FACTOR_Z_THRESHOLD = 0.75
+        RR_RATIO_THRESHOLD = 2.0
+        RSI_OVERBOUGHT = 60.0 # Be more sensitive
+        TREND_GOOD = ["Confirmed Uptrend"] # Be more strict
+        MACD_GOOD = ["Bullish Crossover"]
+    elif market_regime == "TRANSITIONAL":
+        SCORE_THRESHOLD = 1.0
+        FACTOR_Z_THRESHOLD = 0.5
+        RR_RATIO_THRESHOLD = 1.5
+        RSI_OVERBOUGHT = 70.0
+        TREND_GOOD = ["Confirmed Uptrend", "Uptrend (Correction)"]
+        MACD_GOOD = ["Bullish Crossover", "Bullish"]
+    else: # BULLISH
+        SCORE_THRESHOLD = 0.8 # Be less strict
+        FACTOR_Z_THRESHOLD = 0.25
+        RR_RATIO_THRESHOLD = 1.5
+        RSI_OVERBOUGHT = 80.0 # Allow for overbought
+        TREND_GOOD = ["Confirmed Uptrend", "Uptrend (Correction)"]
+        MACD_GOOD = ["Bullish Crossover", "Bullish"]
+    # --- End of change ---
 
     # Step 1: Quant Score
     step1_met = False
@@ -757,10 +787,6 @@ def display_buy_signal_checklist(ticker_data):
     step3_met = False
     step3_text = "**3. Favorable Technicals**"
     
-    RSI_OVERBOUGHT = 70.0
-    TREND_GOOD = ["Confirmed Uptrend", "Uptrend (Correction)"]
-    MACD_GOOD = ["Bullish Crossover", "Bullish"]
-
     rsi_val = ticker_data.get('RSI', 99)
     trend_val = ticker_data.get('Trend (50/200 Day MA)', 'N/A')
     macd_val = ticker_data.get('MACD_Signal', 'N/A')
@@ -776,7 +802,7 @@ def display_buy_signal_checklist(ticker_data):
     trend_icon = "✅" if is_trend_ok else "❌"
     macd_icon = "✅" if is_macd_ok else "❌"
     
-    step3_details = f"{trend_icon} Trend: {trend_val}<br>{macd_icon} MACD: {macd_val}<br>{rsi_icon} RSI: {rsi_val:.1f}"
+    step3_details = f"{trend_icon} Trend: {trend_val}<br>{macd_icon} MACD: {macd_val}<br>{rsi_icon} RSI: {rsi_val:.1f} (<{RSI_OVERBOUGHT})"
 
     # Step 4: SMC Entry Signal
     step4_met = False
@@ -784,7 +810,7 @@ def display_buy_signal_checklist(ticker_data):
     entry_signal = ticker_data.get('entry_signal', 'No Trade')
     has_fvg = ticker_data.get('bullish_ob_fvg', False)
     has_vol = ticker_data.get('bullish_ob_volume_ok', False)
-    vol_missing_data = ticker_data.get('smc_volume_missing', False) # <-- ✅ NEW: Check for the flag
+    vol_missing_data = ticker_data.get('smc_volume_missing', False) # <-- ✅ NEW (Phase 2): Check for the flag
     
     details = []
     if entry_signal == 'Buy near Bullish OB':
@@ -797,7 +823,7 @@ def display_buy_signal_checklist(ticker_data):
 
     details.append(f"FVG: {'✅' if has_fvg else '❌'}")
     
-    # --- ✅ NEW: Add warning if volume data was missing ---
+    # --- ✅ NEW (Phase 2): Add warning if volume data was missing ---
     vol_icon = '✅' if has_vol else '❌'
     vol_warning = " (Data N/A)" if vol_missing_data else ""
     details.append(f"Vol: {vol_icon}{vol_warning}")
@@ -813,7 +839,7 @@ def display_buy_signal_checklist(ticker_data):
         step5_met = True
     step5_details = f"Ratio is {rr_ratio:.2f}"
     
-    st.subheader("Buy Signal Checklist")
+    st.subheader(f"Buy Signal Checklist (Mode: {market_regime})")
     cols = st.columns(5)
     
     criteria = [
@@ -1264,12 +1290,45 @@ def run_market_analyzer_app(config_file_name):
         st.header("🏆 Top Stocks by Final Quant Score")
         st.info("Click a ticker to select it and automatically move to the 'Ticker Deep Dive' tab.")
         
+        # --- ✅ NEW (USER REQ): AI Top 20 Summary ---
+        st.subheader("🤖 AI Top 20 Summary")
+        cache_key = "ai_summary_top20" 
+        
+        if cache_key in st.session_state:
+            st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
+            if st.button("🔄 Regenerate Top 20 Summary", key="regen_ai_top20"):
+                del st.session_state[cache_key]
+                st.rerun()
+        else:
+            if st.button("🤖 Generate AI Summary for Top 20", type="secondary", key="gen_ai_top20"):
+                with st.spinner("Analyzing Top 20 stocks... This may take a moment."):
+                    try:
+                        # Prepare data for the AI
+                        top_20_df = filtered_df.head(20)
+                        # Select key columns for the AI prompt
+                        ai_cols = [
+                            'shortName', 'Final Quant Score', 'entry_signal', 
+                            'Risk/Reward Ratio', 'Z_Value', 'Z_Quality', 'Z_Momentum'
+                        ]
+                        existing_cols = [col for col in ai_cols if col in top_20_df.columns]
+                        top_20_json = top_20_df[existing_cols].to_json(orient="records")
+                        
+                        summary = get_ai_top20_summary(top_20_json, CONFIG)
+                        st.session_state[cache_key] = summary
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to generate AI summary: {e}")
+                        st.session_state[cache_key] = "AI Summary generation failed."
+        
+        st.divider()
+        # --- End of new block ---
+
         with st.expander("How to Find a Good Buy Signal (5-Step Guide)", expanded=False):
-            st.markdown("""
+            st.markdown(f"""
                 This 5-step method helps you use the app to find suitable buying opportunities.
                 
                 ### 1. Check the Final Quant Score (The "What")
-                This is your primary signal. Look for stocks with a **high positive score** (e.g., > 1.0) 
+                This is your primary signal. Look for stocks with a **high positive score** (e.g., > {st.session_state.get('dynamic_thresholds', {}).get('SCORE_THRESHOLD', 1.0)}) 
                 in the ranked list below. 
                 
                 ### 2. Check the Factor Profile (The "Why")
@@ -1288,7 +1347,7 @@ def run_market_analyzer_app(config_file_name):
 
                 ### 5. Check the Risk & Sizing (The "How")
                 In the **"Risk & Position Sizing"** section, check the:
-                * **Risk/Reward Ratio:** Is it favorable (e.g., > 1.5)?
+                * **Risk/Reward Ratio:** Is it favorable (e.g., > {st.session_state.get('dynamic_thresholds', {}).get('RR_RATIO_THRESHOLD', 1.5)})?
                 * **Final Stop Loss:** Is this exit price (based on ATR or Cut-Loss) acceptable?
             """)
         
@@ -1497,7 +1556,14 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
         
     kpi_cols[0].metric("SMC Entry Signal", entry_signal, delta=delta_text, delta_color=delta_color)
 
-    kpi_cols[1].metric("Final Quant Score", f"{ticker_data['Final Quant Score']:.3f}")
+    # --- ✅ NEW (Phase 2): Add help text if z-score fallback was used ---
+    fallback_help = None
+    if ticker_data.get('z_score_fallback', False):
+        fallback_help = "Note: Z-Scores for this stock use global medians, as its sector is too small for peer comparison."
+    
+    kpi_cols[1].metric("Final Quant Score", f"{ticker_data['Final Quant Score']:.3f}", help=fallback_help)
+    # --- End of change ---
+
     kpi_cols[2].metric("Last Price", f"${ticker_data['last_price']:.2f}")
     kpi_cols[3].metric("Market Cap", f"${ticker_data['marketCap']/1e9:.1f} B")
     kpi_cols[4].metric("Trend (50/200 MA)", ticker_data['Trend (50/200 Day MA)'])
@@ -1546,11 +1612,23 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     # --- Raw News Headlines ---
     st.subheader("Latest News")
-    news_list_str = ticker_data.get('news_list', 'N/A')
-    has_recent_news = ticker_data.get('recent_news', 'No') == 'Yes'
     
-    if has_recent_news:
-        st.markdown("🔥 **Recent News Detected (Last 48h)**")
+    # --- ✅ NEW (Phase 3): Display AI News Sentiment Score ---
+    news_sentiment = ticker_data.get('news_sentiment_score', 0.0)
+    if news_sentiment > 0.3:
+        sentiment_text = "Positive"
+        delta_color = "normal"
+    elif news_sentiment < -0.3:
+        sentiment_text = "Negative"
+        delta_color = "inverse"
+    else:
+        sentiment_text = "Neutral"
+        delta_color = "off"
+        
+    st.metric("AI News Sentiment", f"{sentiment_text} ({news_sentiment:.2f})", delta=f"{news_sentiment:.2f}", delta_color=delta_color)
+    # --- End of change ---
+
+    news_list_str = ticker_data.get('news_list', 'N/A')
     
     if news_list_str == "N/A" or not news_list_str:
         st.info("No raw news headlines found.")
@@ -1650,7 +1728,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     be_ob_label = f"{'✅ Mitigated' if be_ob_validated else 'Fresh'} Bearish OB"
     be_ob_display = f"${be_ob_high:.2f} - ${be_ob_low:.2f}" if pd.notna(be_ob_low) else "N/A"
-    be_ob_help = f"FVG: {'Yes' if be_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
+    be_ob_help = f"FVG: {'Yes' if b_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
     zone_cols[1].metric(be_ob_label, be_ob_display, help=be_ob_help)
     
     support = ticker_data.get('last_swing_low', np.nan)

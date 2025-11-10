@@ -351,8 +351,8 @@ def generate_quant_report(CONFIG, progress_callback=None):
     start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # --- ✅ MODIFIED: Pass CONFIG to process_ticker ---
-        future_to_ticker = {executor.submit(process_ticker, ticker, CONFIG): ticker for ticker in tickers_to_fetch}
+        # --- ✅ MODIFIED: Pass CONFIG and fetch_news=False ---
+        future_to_ticker = {executor.submit(process_ticker, ticker, CONFIG, fetch_news=False): ticker for ticker in tickers_to_fetch}
         
         for future in as_completed(future_to_ticker):
             ticker = future_to_ticker[future]
@@ -986,8 +986,8 @@ def run_market_analyzer_app(config_file_name):
                 else:
                     with st.spinner(f"Processing data for {new_ticker}..."):
                         try:
-                            # --- ✅ MODIFIED: Pass CONFIG ---
-                            result = process_ticker(new_ticker, CONFIG)
+                            # --- ✅ MODIFIED: Pass CONFIG and fetch_news=True ---
+                            result = process_ticker(new_ticker, CONFIG, fetch_news=True)
                             
                             if result and result.get('success', False):
                                 new_hist_df = result.pop('hist_df', None)
@@ -1443,13 +1443,15 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
         current_index = ticker_list.index(selected_ticker)
         
         is_first = (current_index == 0)
-        if add_col1.button("⬅️ Previous", use_container_width=True, disabled=is_first, key="prev_ticker"):
+        # --- ✅ BUG FIX: Added dynamic key ---
+        if add_col1.button("⬅️ Previous", use_container_width=True, disabled=is_first, key=f"prev_ticker_{selected_ticker}"):
             st.session_state.selected_ticker = ticker_list[current_index - 1]
             st.session_state.active_tab = "🔬 Ticker Deep Dive" # <-- FIX: Explicitly keep tab
             st.rerun()
             
         is_last = (current_index == len(ticker_list) - 1)
-        if add_col2.button("Next ➡️", use_container_width=True, disabled=is_last, key="next_ticker"):
+        # --- ✅ BUG FIX: Added dynamic key ---
+        if add_col2.button("Next ➡️", use_container_width=True, disabled=is_last, key=f"next_ticker_{selected_ticker}"):
             st.session_state.selected_ticker = ticker_list[current_index + 1]
             st.session_state.active_tab = "🔬 Ticker Deep Dive" # <-- FIX: Explicitly keep tab
             st.rerun()
@@ -1511,7 +1513,8 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
         st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
     else:
         # If not, show the button
-        if st.button(f"🤖 Click to Generate AI Summary for {selected_ticker}", type="secondary", key="gen_ai_deep_dive"):
+        # --- ✅ BUG FIX: Added dynamic key ---
+        if st.button(f"🤖 Click to Generate AI Summary for {selected_ticker}", type="secondary", key=f"gen_ai_deep_dive_{selected_ticker}"):
             with st.spinner(f"Generating AI analysis for {selected_ticker}... This may take a moment."):
                 try:
                     # Get the data needed for the prompt
@@ -1640,7 +1643,7 @@ def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_co
     
     be_ob_label = f"{'✅ Mitigated' if be_ob_validated else 'Fresh'} Bearish OB"
     be_ob_display = f"${be_ob_high:.2f} - ${be_ob_low:.2f}" if pd.notna(be_ob_low) else "N/A"
-    be_ob_help = f"FVG: {'Yes' if b_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
+    be_ob_help = f"FVG: {'Yes' if be_ob_fvg else 'No'} | BOS Vol: {'High' if b_ob_vol else 'Low'}"
     zone_cols[1].metric(be_ob_label, be_ob_display, help=be_ob_help)
     
     support = ticker_data.get('last_swing_low', np.nan)
@@ -1737,12 +1740,14 @@ def process_transactions(transactions, all_data_df):
                 current_price = ticker_data['last_price']
                 name = ticker_data.get('shortName', ticker)
                 sector = ticker_data.get('Sector', 'Unknown')
+                entry_signal = ticker_data.get('entry_signal', 'N/A') # <-- ✅ ADDED
                 # Get factor scores
                 factor_scores = {col: ticker_data.get(col, 0) for col in all_data_df.columns if col.startswith('Z_')}
             else:
                 current_price = np.nan
                 name = ticker
                 sector = "Unknown"
+                entry_signal = "N/A" # <-- ✅ ADDED
                 factor_scores = {}
             
             market_value = total_shares * current_price
@@ -1752,6 +1757,7 @@ def process_transactions(transactions, all_data_df):
                 'Ticker': ticker,
                 'Name': name,
                 'Sector': sector,
+                'entry_signal': entry_signal, # <-- ✅ ADDED
                 'Shares': total_shares,
                 'Avg Cost': avg_cost,
                 'Total Cost': total_cost,
@@ -1836,6 +1842,22 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
                     top_5_pct = (top_5['Market Value'].sum() / market_value) * 100
                     portfolio_metrics["Top 5 Holdings %"] = f"{top_5_pct:.1f}%"
                     portfolio_metrics["Top 5 Holdings"] = top_5[['Name', 'Weight']].to_dict('index')
+
+                    # --- ✅ NEW: Add detailed holdings data for the AI ---
+                    # Join with all_data_df to get the Final Quant Score
+                    detailed_holdings_df = open_positions.join(all_data_df[['Final Quant Score']])
+                    
+                    # Select key columns for the AI to analyze
+                    ai_columns = [
+                        'Name', 'Sector', 'entry_signal', 'Unrealized P/L', 'Weight',
+                        'Final Quant Score', 'Z_Value', 'Z_Momentum', 'Z_Quality'
+                    ]
+                    # Filter columns that actually exist
+                    existing_ai_columns = [col for col in ai_columns if col in detailed_holdings_df.columns]
+                    
+                    # Convert to a list of dicts for clean JSON
+                    portfolio_metrics["Holdings Details"] = detailed_holdings_df[existing_ai_columns].to_dict('records')
+                    # --- END OF NEW BLOCK ---
 
                 # 2. Call the new AI function from spus.py
                 try:
@@ -1973,6 +1995,7 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
         st.dataframe(open_positions, use_container_width=True,
             column_config={
                 "Name": st.column_config.TextColumn("Name", width="medium"),
+                "entry_signal": st.column_config.TextColumn("SMC Signal"), # <-- ✅ ADDED
                 "Avg Cost": st.column_config.NumberColumn(format="$%.2f"),
                 "Current Price": st.column_config.NumberColumn(format="$%.2f"),
                 "Market Value": st.column_config.NumberColumn(format="$%.2f"),
@@ -2094,8 +2117,8 @@ def display_portfolio_tab_v2(all_data_df, all_histories, factor_z_cols, CONFIG):
     st.subheader("Position Analyzer")
     
     if not open_positions.empty:
-        # Use a consistent key for position analyzer selection
-        selected_ticker_port = st.selectbox("Select a position to analyze:", options=open_positions.index, key="port_pos_analyzer_select")
+        # --- ✅ BUG FIX: Removed static key ---
+        selected_ticker_port = st.selectbox("Select a position to analyze:", options=open_positions.index)
         
         if selected_ticker_port:
             position_data = open_positions.loc[selected_ticker_port]
@@ -2228,6 +2251,7 @@ def display_position_analysis_v2(position_data, ticker_data, CONFIG):
         st.markdown(f'<div class="rtl-container">{st.session_state[cache_key]}</div>', unsafe_allow_html=True)
     else:
         # If not, show the button
+        # --- ✅ BUG FIX: Added dynamic key ---
         if st.button(f"🤖 Click to Generate Position Assessment for {selected_ticker}", type="secondary", key=f"gen_ai_position_{selected_ticker}"):
             with st.spinner(f"Generating AI position assessment for {selected_ticker}... This may take a moment."):
                 try:

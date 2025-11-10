@@ -57,6 +57,13 @@ SPUS Quantitative Analyzer v19.12 (Force v1 API)
      analyzes detailed holdings for stock-specific recommendations.
 - ✅ MODIFIED (USER REQ): `process_ticker` now has a `fetch_news`
      parameter to limit API calls.
+- ✅ UPGRADE (Phase 1): Added 12-hour caching to `fetch_market_tickers`
+     to make web scraping fallback more robust.
+- ✅ UPGRADE (Phase 2): Added `smc_volume_missing` flag for UI trust.
+- ✅ UPGRADE (Phase 2): Added `z_score_fallback` flag for small sectors.
+- ✅ UPGRADE (Phase 3): Replaced `recent_news_count` with
+     `news_sentiment_score` (float) calculated on-demand by AI.
+- ✅ NEW (USER REQ): Added `get_ai_top20_summary` function.
 """
 
 import requests
@@ -76,7 +83,7 @@ import openai
 from openai import OpenAI
 import google.genai as genai 
 from google.genai.errors import APIError as GeminiAPIError
-import pickle
+import pickle # <-- ✅ ADDED (Phase 1)
 # ❌ REMOVED: from urllib.parse import quote_plus
 
 # --- Define Base Directory ---
@@ -355,7 +362,7 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         'bearish_ob_low': np.nan, 'bearish_ob_high': np.nan, 'bearish_ob_validated': bool(False),
         'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
         'last_swing_low': np.nan, 'last_swing_high': np.nan,
-        'smc_volume_missing': bool(False) # <-- ✅ ADD THIS
+        'smc_volume_missing': bool(False) # <-- ✅ ADDED (Phase 2)
     }
 
     if len(hist_df_full) < lookback:
@@ -370,7 +377,7 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
              logging.warning(f"[{ticker}] 'Volume' not in hist_df. Cannot perform volume confirmation.")
              hist_df['Volume'] = 0
              vol_multiplier = 999 # Effectively disables volume check
-             ob_data['smc_volume_missing'] = bool(True) # <-- ✅ ADD THIS
+             ob_data['smc_volume_missing'] = bool(True) # <-- ✅ ADDED (Phase 2)
              
         hist_df['vol_sma'] = hist_df['Volume'].rolling(window=vol_lookback).mean()
         
@@ -524,7 +531,7 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
             'bearish_ob_low': np.nan, 'bearish_ob_high': np.nan, 'bearish_ob_validated': bool(False),
             'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
             'last_swing_low': np.nan, 'last_swing_high': np.nan,
-            'smc_volume_missing': bool(False)
+            'smc_volume_missing': bool(False) # <-- ✅ ADDED (Phase 2)
         }
         return ob_data_default
 
@@ -772,6 +779,186 @@ def get_ai_portfolio_summary(portfolio_data, CONFIG):
             
     else:
         logging.warning("[Portfolio] Gemini failed and OpenAI key is missing or invalid.")
+        return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
+
+# --- ✅ NEW FUNCTION (Phase 3): AI News Sentiment ---
+def get_ai_news_sentiment(headlines_list, CONFIG):
+    """
+    Analyzes a list of news headlines and returns a sentiment score from -1.0 to 1.0.
+    """
+    gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY")
+    openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
+    
+    if not headlines_list:
+        return 0.0
+
+    # Join headlines into a single string for the prompt
+    headlines_str = "\n- ".join(headlines_list)
+    
+    prompt = f"""
+    Task: Act as a financial news sentiment analyst. I will provide you with a list of recent news headlines for a stock.
+    Analyze the *overall sentiment* of these headlines.
+    Respond with a single JSON object with one key, "sentiment_score", which must be a single float between -1.0 (very bearish) and 1.0 (very bullish).
+    
+    Example:
+    Headlines:
+    - "XYZ Corp beats earnings estimates"
+    - "XYZ Corp raises guidance"
+    Response: {{"sentiment_score": 0.8}}
+    
+    Example:
+    Headlines:
+    - "ABC Corp misses revenue targets"
+    - "CEO of ABC Corp under investigation"
+    Response: {{"sentiment_score": -0.9}}
+    
+    Example:
+    Headlines:
+    - "Analysts await Fed decision"
+    - "Market is flat"
+    Response: {{"sentiment_score": 0.0}}
+
+    Headlines to Analyze:
+    - {headlines_str}
+    
+    Response (JSON only):
+    """
+    
+    raw_response = None
+
+    # --- 1. Try Gemini (Primary) ---
+    if gemini_api_key and gemini_api_key != "AIzaSy...YOUR_GEMINI_KEY":
+        try:
+            logging.info(f"[AI News] Attempting Gemini API for sentiment...")
+            client = genai.Client(api_key=gemini_api_key)
+            
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    {"role": "user", "parts": [{"text": prompt}]}
+                ],
+                config={"system_instruction": "You are a helpful JSON-only sentiment analyst."}
+            )
+            raw_response = response.text
+            
+        except Exception as e:
+            logging.warning(f"[AI News] Gemini API failed: {e}. Falling back to OpenAI...")
+
+    # --- 2. Fallback to OpenAI ---
+    if raw_response is None and openai_api_key and openai_api_key != "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
+        try:
+            logging.info(f"[AI News] Attempting OpenAI API (Fallback)...")
+            client = OpenAI(api_key=openai_api_key)
+
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful JSON-only sentiment analyst. Respond only with the JSON object."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+            raw_response = completion.choices[0].message.content
+        except Exception as e:
+            logging.error(f"[AI News] OpenAI API failed: {e}")
+            return 0.0
+            
+    # --- 3. Parse the response ---
+    if raw_response:
+        try:
+            # Clean the response (LLMs sometimes add markdown)
+            clean_json_str = raw_response.strip().replace("```json\n", "").replace("\n```", "")
+            sentiment_data = json.loads(clean_json_str)
+            score = float(sentiment_data.get("sentiment_score", 0.0))
+            logging.info(f"[AI News] Successfully parsed sentiment score: {score}")
+            return score
+        except Exception as e:
+            logging.error(f"[AI News] Failed to parse sentiment JSON: {e}. Response was: {raw_response}")
+            return 0.0
+            
+    logging.warning("[AI News] All AI providers failed or were disabled.")
+    return 0.0
+
+# --- ✅ NEW FUNCTION (USER REQ): AI Top 20 Summary ---
+def get_ai_top20_summary(top_20_data_json, CONFIG):
+    """
+    Analyzes a JSON string of the Top 20 stocks and returns recommendations.
+    """
+    gemini_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("GEMINI_API_KEY")
+    openai_api_key = CONFIG.get("DATA_PROVIDERS", {}).get("OPENAI_API_KEY")
+    
+    prompt = f"""
+    Task: Act as a professional quantitative analyst. The user has provided a JSON list of the Top 20 stocks that matched their filters, ranked by 'Final Quant Score'.
+    Your job is to analyze this list and identify the 2-3 *strongest* "Buy" or "Add" opportunities.
+    
+    A strong opportunity is a combination of:
+    1.  A high 'Final Quant Score' (already ranked).
+    2.  A 'entry_signal' of "Buy near Bullish OB".
+    3.  A good 'Risk/Reward Ratio' (e.g., > 1.5).
+    4.  Strong underlying factor scores (e.g., 'Z_Value' > 0, 'Z_Quality' > 0).
+
+    Provide a brief summary and then list your top recommendations in Arabic.
+
+    Output Format (Use Arabic and Markdown - **Forced RTL**):
+    1.  **ملخص القائمة:** (A 1-2 sentence summary of the overall list. Are there many 'Buy' signals? Is it mostly 'Value' or 'Momentum' stocks?)
+    2.  **⭐ أفضل الفرص (Top Recommendations):**
+        (List 2-3 specific stocks. For each, state the Ticker, Name, Quant Score, and a *brief* justification using the criteria above.)
+        -   **[Ticker] - [Name]** (الدرجة: [Score]): [Justification in Arabic]
+        -   **[Ticker] - [Name]** (الدرجة: [Score]): [Justification in Arabic]
+
+    Top 20 Stocks Data (JSON):
+    ---
+    {top_20_data_json}
+    ---
+    
+    Analysis (in Arabic):
+    """
+    
+    # --- 1. Try Gemini (Primary) ---
+    if gemini_api_key and gemini_api_key != "AIzaSy...YOUR_GEMINI_KEY":
+        try:
+            logging.info("[AI Top 20] Attempting Gemini API...")
+            client = genai.Client(api_key=gemini_api_key)
+            
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    {"role": "user", "parts": [{"text": prompt}]}
+                ],
+                config={"system_instruction": "You are a helpful quantitative analyst providing summaries in Arabic."}
+            )
+            summary = response.text
+            logging.info("[AI Top 20] Successfully received summary from Gemini.")
+            return str(summary)
+            
+        except GeminiAPIError as e:
+            logging.warning(f"[AI Top 20] Gemini API failed: {e}. Falling back to OpenAI...")
+        except Exception as e:
+            logging.warning(f"[AI Top 20] Non-API error with Gemini: {e}. Falling back to OpenAI...")
+
+    # --- 2. Fallback to OpenAI ---
+    if openai_api_key and openai_api_key != "sk-YOUR_ACTUAL_API_KEY_GOES_HERE":
+        try:
+            logging.info("[AI Top 20] Attempting OpenAI API (Fallback)...")
+            client = OpenAI(api_key=openai_api_key)
+
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful quantitative analyst providing summaries in Arabic."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            summary = completion.choices[0].message.content
+            logging.info("[AI Top 20] Successfully received summary from OpenAI (Fallback).")
+            return str(summary)
+
+        except Exception as e:
+            logging.error(f"[AI Top 20] OpenAI API failed: {e}")
+            return f"N/A (AI Summary Error: OpenAI API failed.)"
+            
+    else:
+        logging.warning("[AI Top 20] Gemini failed and OpenAI key is missing or invalid.")
         return "N/A (AI Summary Disabled: API Keys Missing or Invalid)"
 
 # --- ✅ MODIFIED: Removed News from yfinance fetch ---
@@ -1250,23 +1437,19 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
         try:
             # 1. Parse Finnhub News
             news = data.get('finnhub_news', []) # Get news from process_ticker
-            news_str = "No"
             news_list_str = "N/A"
             
             if news and isinstance(news, list):
                 # Get top 5 headlines
                 news_titles = [str(item.get('headline', 'N/A')) for item in news[:5]]
                 news_list_str = ", ".join(news_titles) # Flatten list to string
-                
-                now_ts = datetime.now().timestamp()
-                recent_news_ts = now_ts - (CONFIG.get('NEWS_LOOKBACK_HOURS', 48) * 3600)
-                
-                # Finnhub provides 'datetime' as a UTC timestamp
-                if any(item.get('datetime', 0) > recent_news_ts for item in news):
-                    news_str = "Yes"
             
             parsed['news_list'] = str(news_list_str) # Force string
-            parsed['recent_news'] = str(news_str) # Force string
+            
+            # --- ✅ MODIFIED (Phase 3): Get AI Sentiment Score ---
+            # This score is now passed from process_ticker
+            parsed['news_sentiment_score'] = float(data.get('news_sentiment_score', 0.0))
+            # --- End of change ---
 
             # 2. Parse Earnings/Dividends (from yfinance info/earnings_data)
             last_div_date_ts = info.get('lastDividendDate')
@@ -1305,7 +1488,7 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
         except Exception as e:
              logging.warning(f"[{ticker_symbol}] Error parsing news/calendar: {e}")
              parsed['news_list'] = "N/A"
-             parsed['recent_news'] = "N/A"
+             parsed['news_sentiment_score'] = 0.0 # <-- ✅ MODIFIED (Phase 3)
              parsed['next_earnings_date'] = "N/A"
              parsed['last_dividend_date'] = "N/A"
              parsed['last_dividend_value'] = np.nan
@@ -1462,7 +1645,7 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
         
     except Exception as e:
         logging.error(f"[{ticker_symbol}] Fatal error in parse_ticker_data: {e}", exc_info=True)
-        # ✅ FIX: Return a flat dict with default bools to prevent Arrow error
+        # ✅ FIX: Standardized error dict
         return {
             'ticker': str(ticker_symbol), 
             'success': bool(False), 
@@ -1476,9 +1659,12 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
             'bearish_ob_fvg': bool(False),
             'bearish_ob_volume_ok': bool(False),
             'smc_volume_missing': bool(False),
-            'next_ex_dividend_date': 'N/A',
-            'shortName': 'N/A', # <-- ✅ ADD THIS
-            'ai_holistic_analysis': None # <-- MODIFIED (P4)
+            'z_score_fallback': bool(False),
+            'next_ex_dividend_date': 'N/A', 
+            'shortName': 'N/A', 
+            'ai_holistic_analysis': None,
+            'news_sentiment_score': 0.0,
+            'news_list': 'N/A'
         }
 
 
@@ -1489,19 +1675,23 @@ def process_ticker(ticker, CONFIG, fetch_news=True):
     Attempts yfinance, validates, falls back to Alpha Vantage, validates,
     fetches news from Finnhub, then parses all data.
     """
+    # ✅ FIX: Standardized error dict
+    error_dict = {
+        'ticker': str(ticker), 'success': bool(False), 'error': 'Unknown error',
+        'bullish_ob_validated': bool(False), 'bearish_ob_validated': bool(False),
+        'earnings_negative': bool(False), 'earnings_volatile': bool(False),
+        'bullish_ob_fvg': bool(False), 'bullish_ob_volume_ok': bool(False),
+        'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
+        'smc_volume_missing': bool(False), 'z_score_fallback': bool(False),
+        'next_ex_dividend_date': 'N/A', 'shortName': 'N/A', 
+        'ai_holistic_analysis': None, 'news_sentiment_score': 0.0,
+        'news_list': 'N/A'
+    }
+
     if CONFIG is None:
         logging.error(f"process_ticker ({ticker}): CONFIG is None.")
-        return {
-            'ticker': str(ticker), 'success': bool(False), 'error': 'Config not loaded',
-            'bullish_ob_validated': bool(False), 'bearish_ob_validated': bool(False),
-            'earnings_negative': bool(False), 'earnings_volatile': bool(False),
-            'bullish_ob_fvg': bool(False), 'bullish_ob_volume_ok': bool(False),
-            'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
-            'next_ex_dividend_date': 'N/A',
-            'shortName': 'N/A', # <-- ✅ ADD THIS
-            'smc_volume_missing': bool(False), # <-- ✅ ADD THIS
-            'ai_holistic_analysis': None # <-- MODIFIED (P4)
-        }
+        error_dict['error'] = 'Config not loaded'
+        return error_dict
         
     # 1. Attempt yfinance
     ticker_obj = yf.Ticker(ticker)
@@ -1533,16 +1723,8 @@ def process_ticker(ticker, CONFIG, fetch_news=True):
                  hist_df_for_storage = av_data.get('hist')
         else:
             logging.error(f"[{ticker}] All data providers failed or returned invalid data.")
-            return {
-                'ticker': str(ticker), 'success': bool(False), 'error': 'All data providers failed',
-                'bullish_ob_validated': bool(False), 'bearish_ob_validated': bool(False),
-                'earnings_negative': bool(False), 'earnings_volatile': bool(False),
-                'bullish_ob_fvg': bool(False), 'bullish_ob_volume_ok': bool(False),
-                'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
-                'next_ex_dividend_date': 'N/A',
-                'shortName': 'N/A', # <-- ✅ ADD THIS
-                'ai_holistic_analysis': None # <-- MODIFIED (P4)
-            }
+            error_dict['error'] = 'All data providers failed'
+            return error_dict
             
     # --- ✅ NEW: 3. Fetch News from Finnhub (Conditional) ---
     if fetch_news:
@@ -1550,12 +1732,24 @@ def process_ticker(ticker, CONFIG, fetch_news=True):
         if finnhub_key and finnhub_key != "YOUR_NEW_FINNHUB_KEY_GOES_HERE":
             news_list = fetch_data_finnhub_news(ticker, finnhub_key)
             data_to_parse['finnhub_news'] = news_list # Add news to the data dict
+            
+            # --- ✅ NEW (Phase 3): Get AI Sentiment Score ---
+            if news_list:
+                headlines = [item.get('headline', '') for item in news_list]
+                sentiment_score = get_ai_news_sentiment(headlines, CONFIG)
+                data_to_parse['news_sentiment_score'] = sentiment_score
+            else:
+                data_to_parse['news_sentiment_score'] = 0.0
+            # --- End of change ---
+            
         else:
             logging.warning(f"[{ticker}] FINNHUB_API_KEY not found or is placeholder. News will be missing.")
             data_to_parse['finnhub_news'] = []
+            data_to_parse['news_sentiment_score'] = 0.0
     else:
         # Don't fetch news to save API calls
         data_to_parse['finnhub_news'] = []
+        data_to_parse['news_sentiment_score'] = 0.0 # Default for non-deep dive
             
     # 4. Parse and Calculate
     try:
@@ -1568,16 +1762,8 @@ def process_ticker(ticker, CONFIG, fetch_news=True):
         
     except Exception as e:
         logging.critical(f"[{ticker}] Unhandled exception in parse_ticker_data: {e}", exc_info=True)
-        return {
-            'ticker': str(ticker), 'success': bool(False), 'error': f'Parsing error: {e}',
-            'bullish_ob_validated': bool(False), 'bearish_ob_validated': bool(False),
-            'earnings_negative': bool(False), 'earnings_volatile': bool(False),
-            'bullish_ob_fvg': bool(False), 'bullish_ob_volume_ok': bool(False),
-            'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
-            'next_ex_dividend_date': 'N/A',
-            'shortName': 'N/A', # <-- ✅ ADD THIS
-            'ai_holistic_analysis': None # <-- MODIFIED (P4)
-        }
+        error_dict['error'] = f'Parsing error: {e}'
+        return error_dict
 
 
 # --- DEPRECATED FUNCTIONS (Kept for compatibility) ---

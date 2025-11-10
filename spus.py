@@ -354,7 +354,8 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
         'bullish_ob_fvg': bool(False), 'bullish_ob_volume_ok': bool(False),
         'bearish_ob_low': np.nan, 'bearish_ob_high': np.nan, 'bearish_ob_validated': bool(False),
         'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
-        'last_swing_low': np.nan, 'last_swing_high': np.nan
+        'last_swing_low': np.nan, 'last_swing_high': np.nan,
+        'smc_volume_missing': bool(False) # <-- ✅ ADD THIS
     }
 
     if len(hist_df_full) < lookback:
@@ -369,6 +370,7 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
              logging.warning(f"[{ticker}] 'Volume' not in hist_df. Cannot perform volume confirmation.")
              hist_df['Volume'] = 0
              vol_multiplier = 999 # Effectively disables volume check
+             ob_data['smc_volume_missing'] = bool(True) # <-- ✅ ADD THIS
              
         hist_df['vol_sma'] = hist_df['Volume'].rolling(window=vol_lookback).mean()
         
@@ -521,7 +523,8 @@ def find_order_blocks(hist_df_full, ticker, CONFIG):
             'bullish_ob_fvg': bool(False), 'bullish_ob_volume_ok': bool(False),
             'bearish_ob_low': np.nan, 'bearish_ob_high': np.nan, 'bearish_ob_validated': bool(False),
             'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
-            'last_swing_low': np.nan, 'last_swing_high': np.nan
+            'last_swing_low': np.nan, 'last_swing_high': np.nan,
+            'smc_volume_missing': bool(False)
         }
         return ob_data_default
 
@@ -1472,6 +1475,7 @@ def parse_ticker_data(data, ticker_symbol, CONFIG):
             'bullish_ob_volume_ok': bool(False),
             'bearish_ob_fvg': bool(False),
             'bearish_ob_volume_ok': bool(False),
+            'smc_volume_missing': bool(False),
             'next_ex_dividend_date': 'N/A',
             'shortName': 'N/A', # <-- ✅ ADD THIS
             'ai_holistic_analysis': None # <-- MODIFIED (P4)
@@ -1495,6 +1499,7 @@ def process_ticker(ticker, CONFIG, fetch_news=True):
             'bearish_ob_fvg': bool(False), 'bearish_ob_volume_ok': bool(False),
             'next_ex_dividend_date': 'N/A',
             'shortName': 'N/A', # <-- ✅ ADD THIS
+            'smc_volume_missing': bool(False), # <-- ✅ ADD THIS
             'ai_holistic_analysis': None # <-- MODIFIED (P4)
         }
         

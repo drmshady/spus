@@ -1421,7 +1421,7 @@ def run_market_analyzer_app(config_file_name):
     
     # --- ✅ NEW (USER REQ): Tab 4: My Portfolio (Transaction Log) ---
     elif selected_tab == "💼 My Portfolio":
-        display_portfolio_tab_v2(st.session_state.raw_df, all_histories, factor_z_cols, CONFIG)
+        display_portfolio_tab_v2(df, all_histories, factor_z_cols, CONFIG)
             
 # --- ⭐️ NEW HELPER FUNCTION ⭐️ ---
 def display_deep_dive_details(ticker_data, hist_data, all_histories, factor_z_cols, norm_weights, filtered_df, CONFIG):

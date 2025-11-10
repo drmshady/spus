@@ -210,10 +210,11 @@ def calculate_all_z_scores(df, config):
             continue
             
         df_analysis[col] = pd.to_numeric(df_analysis[col], errors='coerce')
-        lower = df_analysis[col].quantile(win_limit)
-        upper = df_analysis[col].quantile(1 - win_limit)
-        if pd.notna(lower) and pd.notna(upper) and lower < upper:
-            df_analysis[col] = df_analysis[col].clip(lower, upper)
+        
+        # --- ✅ FIX: Use scipy.stats.winsorize for consistent outlier clipping ---
+        # This replaces the manual quantile().clip() method
+        df_analysis[col] = winsorize(df_analysis[col].fillna(df_analysis[col].median()), limits=(win_limit, win_limit))
+        # We fillna with the median *before* winsorizing to handle NaNs robustly
         
         global_median = df_analysis[col].median()
         if global_median == 0: global_median = 1e-6 

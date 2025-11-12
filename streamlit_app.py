@@ -1241,6 +1241,35 @@ def run_market_analyzer_app(config_file_name):
     else:
         filt_col5.info("No Cut Loss % data to filter.")
         support_range = (0.0, 0.0)
+    # --- ✅ NEW (USER REQ): Filter for Price near 50-Day MA ---
+    filt_col6, _ = st.columns(2)
+    
+    if 'Price_vs_SMA50' in df.columns and not df['Price_vs_SMA50'].isnull().all():
+        # Define a reasonable min/max for the slider, e.g., 20% below to 20% above
+        slider_min = 0.80
+        slider_max = 1.20
+        
+        # Check data bounds, but don't let them go too extreme
+        data_min = max(0.70, df['Price_vs_SMA50'].min())
+        data_max = min(1.30, df['Price_vs_SMA50'].max())
+        
+        # Ensure min is still less than max
+        if data_min >= data_max:
+            data_min = slider_min
+            data_max = slider_max
+
+        sma_prox_range = filt_col6.slider(
+            "Filter by Price Proximity to 50-Day MA (1.0 = on MA):",
+            min_value=data_min, 
+            max_value=data_max,
+            value=(0.98, 1.02), # Default to +/- 2% ("near")
+            step=0.01,
+            format="%.2f"
+        )
+    else:
+        filt_col6.info("No 50-Day MA data to filter.")
+        sma_prox_range = (0.0, 0.0)
+    # --- End of new block ---    
     
     base_filters = (
         (df['Sector'].isin(selected_sectors)) &
@@ -1261,6 +1290,14 @@ def run_market_analyzer_app(config_file_name):
             (df['pct_above_cutloss'].le(support_range[1]))
         )
         base_filters &= support_filter
+    # --- ✅ NEW (USER REQ): Apply the 50-Day MA proximity filter ---
+    if sma_prox_range != (0.0, 0.0) and 'Price_vs_SMA50' in df.columns and not df['Price_vs_SMA50'].isnull().all():
+        sma_prox_filter = (
+            (df['Price_vs_SMA50'].ge(sma_prox_range[0])) &
+            (df['Price_vs_SMA50'].le(sma_prox_range[1]))
+        )
+        base_filters &= sma_prox_filter
+    # --- End of new block ---    
 
     filtered_df = df[base_filters].copy()
     

@@ -300,14 +300,14 @@ def generate_quant_report(CONFIG, progress_callback=None):
     if market_regime == "BEARISH" and CONFIG.get('HALT_IN_BEAR_MARKET', True):
         report_progress(1.0, f"Analysis Halted: Market Regime is {market_regime}.")
         # Return empty but valid data structures
-        return pd.DataFrame(), {}, {}, "BEARISH" # Return regime status
+        return pd.DataFrame(), {}, {}, "BEARISH", 0, [] # <-- ✅ MODIFIED
         
     # --- 2. Fetch Tickers (WAS STEP 1) ---
     report_progress(0.05, "(2/8) Fetching market ticker list...")
     ticker_symbols = fetch_market_tickers(CONFIG) # <-- ✅ MODIFIED
     if not ticker_symbols:
         report_progress(1.0, "Error: No ticker symbols found. Analysis cancelled.")
-        return None, None, None, market_regime
+        return None, None, None, market_regime, 0, [] # <-- ✅ MODIFIED
         
     exclude_tickers = CONFIG.get('EXCLUDE_TICKERS', [])
     ticker_symbols = [t for t in ticker_symbols if t not in exclude_tickers]
@@ -357,6 +357,8 @@ def generate_quant_report(CONFIG, progress_callback=None):
     total_to_fetch = len(tickers_to_fetch)
     start_time = time.time()
 
+    failed_tickers_list = [] # <-- ✅ NEW: Initialize list to track failures
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         # --- ✅ MODIFIED: Pass CONFIG and fetch_news=False ---
         future_to_ticker = {executor.submit(process_ticker, ticker, CONFIG, fetch_news=False): ticker for ticker in tickers_to_fetch}
@@ -380,8 +382,10 @@ def generate_quant_report(CONFIG, progress_callback=None):
                 
                 else:
                     logging.error(f"Failed to process {ticker}: {result.get('error', 'Unknown error')}")
+                    failed_tickers_list.append(ticker) # <-- ✅ NEW: Add failed ticker
             except Exception as e:
                 logging.error(f"Error processing {ticker} in main loop: {e}", exc_info=True)
+                failed_tickers_list.append(ticker) # <-- ✅ NEW: Add failed ticker
             
             processed_count += 1
             if total_to_fetch > 0:
@@ -389,11 +393,27 @@ def generate_quant_report(CONFIG, progress_callback=None):
                 report_progress(percent_done, f"(3/8) Processing: {ticker} ({processed_count}/{total_to_fetch})")
 
     end_time = time.time()
-    report_progress(0.7, f"(4/8) Data fetch complete. Time taken: {end_time - start_time:.2f}s")
+    
+    # --- ✅ MODIFIED: Updated progress report with failure count ---
+    failed_count = len(failed_tickers_list)
+    success_count = len(results_list)
+    total_attempted = len(ticker_symbols)
+    
+    progress_text = f"(4/8) Data fetch complete. {success_count}/{total_attempted} succeeded. {failed_count} failed. Time: {end_time - start_time:.2f}s"
+    if failed_count > 0:
+        logging.warning(f"Failed to process {failed_count} tickers: {', '.join(failed_tickers_list)}")
+        # Show first 3 failed tickers in the UI progress text
+        failed_preview = ', '.join(failed_tickers_list[:3])
+        if failed_count > 3:
+            failed_preview += '...'
+        progress_text += f" (Failed: {failed_preview})"
+
+    report_progress(0.7, progress_text)
+    # --- END OF MODIFICATION ---
 
     if not results_list:
         report_progress(1.0, "Error: No data successfully processed. Analysis cancelled.")
-        return None, None, None, market_regime
+        return None, None, None, market_regime, failed_count, failed_tickers_list # <-- ✅ MODIFIED
         
     results_df = pd.DataFrame(results_list)
     results_df.set_index('ticker', inplace=True)
@@ -507,7 +527,7 @@ def generate_quant_report(CONFIG, progress_callback=None):
 
     report_progress(1.0, "Analysis complete.")
     
-    return results_df, all_histories, data_sheets, market_regime
+    return results_df, all_histories, data_sheets, market_regime, failed_count, failed_tickers_list # <-- ✅ MODIFIED
 
 # --- ⭐️ 4. Streamlit UI Functions ⭐️ ---
 
@@ -531,22 +551,23 @@ def load_analysis_data(config_file_name, run_timestamp):
     _CONFIG = st.session_state.get('CONFIG')
     if _CONFIG is None:
         st.error(f"Failed to load CONFIG from session state in load_analysis_data.")
-        return None, None, None, None, None
+        return None, None, None, None, None, 0, [] # <-- ✅ MODIFIED
     
-    df, histories, sheets, market_regime = generate_quant_report(_CONFIG, st_progress_callback)
+    # --- ✅ MODIFIED: Unpack new failure data ---
+    df, histories, sheets, market_regime, failed_count, failed_list = generate_quant_report(_CONFIG, st_progress_callback)
     
     progress_bar.empty()
     status_text.empty()
     
     if df is None:
         st.error("Analysis failed. Check logs.")
-        return None, None, None, None, None
+        return None, None, None, None, None, failed_count, failed_list # <-- ✅ MODIFIED
     
     # Handle the case where analysis was halted
     if market_regime == "BEARISH" and df.empty:
         st.warning(f"Analysis Halted: Market Regime is {market_regime}.")
         
-    return df, histories, sheets, datetime.now(SAUDI_TZ).timestamp(), market_regime
+    return df, histories, sheets, datetime.now(SAUDI_TZ).timestamp(), market_regime, failed_count, failed_list # <-- ✅ MODIFIED
 
 def get_latest_reports(excel_base_path):
     """Gets paths for the latest Excel and PDF reports."""
@@ -947,7 +968,7 @@ def run_market_analyzer_app(config_file_name):
     # --- ⭐️ START OF MOVED BLOCK ⭐️ ---
     # This block is moved from the bottom to here to fix the UnboundLocalError
     # --- ✅ MODIFIED: Load Data using config_file_name as key ---
-    base_raw_df, base_histories, base_sheets, base_last_run_time, base_market_regime = load_analysis_data(config_file_name, st.session_state.run_timestamp)
+    base_raw_df, base_histories, base_sheets, base_last_run_time, base_market_regime, failed_count, failed_list = load_analysis_data(config_file_name, st.session_state.run_timestamp) # <-- ✅ MODIFIED
     
     # Check for cache invalidation
     if 'raw_df' not in st.session_state or st.session_state.get('base_run_timestamp') != st.session_state.run_timestamp:
@@ -961,6 +982,11 @@ def run_market_analyzer_app(config_file_name):
         st.session_state.last_run_time = base_last_run_time
         st.session_state.market_regime = base_market_regime # Store regime from the run
         st.session_state.base_run_timestamp = st.session_state.run_timestamp
+
+        # --- ✅ NEW: Store failure data in session state ---
+        st.session_state.failed_ticker_count = failed_count
+        st.session_state.failed_ticker_list = failed_list
+        # --- END OF NEW BLOCK ---
     
     raw_df = st.session_state.raw_df
     all_histories = st.session_state.all_histories
@@ -1154,6 +1180,14 @@ def run_market_analyzer_app(config_file_name):
     # ...
     
     st.success(f"Data loaded from analysis run at: {datetime.fromtimestamp(last_run_time, SAUDI_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+    # --- ✅ NEW: Display failure warning ---
+    failed_count_ui = st.session_state.get('failed_ticker_count', 0)
+    if failed_count_ui > 0:
+        failed_list_ui = st.session_state.get('failed_ticker_list', [])
+        with st.expander(f"⚠️ **Warning: Failed to fetch data for {failed_count_ui} stock(s).**", expanded=False):
+            st.error(f"The following tickers could not be processed and are excluded from the analysis: {', '.join(failed_list_ui)}")
+    # --- END OF NEW BLOCK ---
 
     # --- UI: Dynamic Score Calculation & Filtering ---
     df = raw_df.copy()
@@ -2476,7 +2510,7 @@ def run_analysis_for_scheduler():
     )
     
     try:
-        df, _, _, _ = generate_quant_report(CONFIG, print_progress_callback) # Added _ for market_regime
+        df, _, _, _, _, _ = generate_quant_report(CONFIG, print_progress_callback) # Added _ for market_regime, failures
         if df is not None:
             print(f"Successfully generated report for {len(df)} tickers.")
         else:
